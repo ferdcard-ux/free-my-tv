@@ -148,6 +148,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final List<HomeApps.Item> lightButtons = new ArrayList<>();
     private Paint lTitle, lTab, lTabOn, lCardTitle, lCardMeta, lQuote, lTip, lDate, lClock, lWeather, lClockQuote;
     private Shader lightGradient;
+    private int titlePrefs = -1, titleGeneration = -1;
+    private long titleBucket = Long.MIN_VALUE;
+    private String forYouTitle = "";
 
     // Shelf
     private List<HomeApps.Item> shelf = new ArrayList<>();
@@ -354,6 +357,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             updatePalette();
             checkNight(true);
             updatePicks();      // three new ones every hour
+            int oldTitlePrefs = titlePrefs, oldTitleGeneration = titleGeneration;
+            long oldTitleBucket = titleBucket;
+            refreshForYouTitle();
+            if (oldTitlePrefs != titlePrefs || oldTitleGeneration != titleGeneration || oldTitleBucket != titleBucket) {
+                heroLayer.invalidate();
+            }
             updateSleep();
             handler.postDelayed(this, 15_000);
         }
@@ -2861,6 +2870,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         imagePaint.setColorFilter(v);
         if (fading && bgFrom != null) drawLightImage(c, bgFrom, bgTo == null ? 1 - e : 1);
         if (bgTo != null) drawLightImage(c, bgTo, fading ? e : 1);
+        if (Prefs.themeImageOpacity() > 0) {
+            drawImage(c, WallpaperImages.themeImage(getContext(), () -> {
+                if (running) sky.invalidate();
+            }), Prefs.themeImageOpacity() / 100f);
+        }
         imagePaint.setColorFilter(null);
     }
 
@@ -2876,7 +2890,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (HomeData.coinCount() > 0) drawQuotes(c);
             return;
         }
-        String hello = Ui.tr("For You");
+        refreshForYouTitle();
+        String hello = forYouTitle;
         c.drawText(hello, MARGIN * k - Ui.leftBearing(lTitle, hello), L_TITLE_BASE * k, lTitle);
         // Text tabs (the selected one in bold, in the main text color); with focus on the tabs, the selected one gets
         // the white pill with a shadow and grows a little (the tvOS focus).
@@ -2911,6 +2926,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private boolean picksOn() {
         return Recs.hasKey(getContext());
+    }
+
+    private void refreshForYouTitle() {
+        boolean random = Prefs.nameMode().equals("random");
+        long bucket = random ? System.currentTimeMillis() / (Prefs.nameInterval() * 60_000L) : 0;
+        if (titlePrefs == Prefs.version && titleGeneration == Ui.generation && titleBucket == bucket) return;
+        titlePrefs = Prefs.version;
+        titleGeneration = Ui.generation;
+        titleBucket = bucket;
+        String name = Prefs.displayName();
+        forYouTitle = name.isEmpty() ? Ui.tr("For You") : Ui.trf("For You: {name}", "name", name);
     }
 
     private void drawClock(Canvas c) {

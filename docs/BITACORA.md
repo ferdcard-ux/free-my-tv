@@ -1,0 +1,319 @@
+# Bitácora de Desarrollo — Free My TV
+
+> **Propósito:** Registro cronológico de las implementaciones, decisiones, intentos fallidos y verificaciones realizadas para añadir nombres personalizables, nuevas fuentes de imágenes del protector de pantalla y fondos de tema.
+>
+> **Alcance:** Esta bitácora cubre el trabajo descrito en las conversaciones de desarrollo y las pruebas en emulador y en la TV física Caixun Sgamer. No es un registro de todas las funciones históricas de Free My TV ni sustituye las notas de una publicación.
+
+---
+
+## 1. Requisitos y decisiones de alcance
+
+### Problema
+
+Se solicitó personalizar el encabezado «Para ti», ampliar las fuentes de imágenes del protector de pantalla y permitir imágenes locales como fondo del tema, conservando la interfaz Canvas y la navegación por control remoto existentes.
+
+### Hallazgos
+
+- La interfaz Android dibuja sus pantallas con Canvas y navega mediante DPAD; las nuevas páginas debían seguir el patrón de ajustes existente.
+- Los nombres se administrarían individualmente desde Ajustes, sin reemplazar el texto de reserva cuando no hubiera nombres.
+- Para imágenes nuevas se necesitaban opciones fijas y aleatorias con intervalo diario o minutos configurables.
+- La fuente TMDB debía conservar el comportamiento que ya tenía.
+- Las imágenes de Bing debían consultarse con configuración regional española y retenerse localmente.
+
+### Alcance del cambio
+
+- Toca: aplicación Android; preferencias, páginas de ajustes, pantalla principal, protector, importación de imágenes, caché local y catálogos de idioma.
+- Fuera de alcance: modo de inicio del televisor, desinstalación de aplicaciones, otros dispositivos ADB conectados, sitio web y paquetes webOS/Tizen.
+
+### Decisiones
+
+1. Agregar y quitar nombres uno por uno. Si no hay nombres, mantener «Para ti».
+2. Ofrecer modo fijo y aleatorio; permitir intervalo diario o en minutos.
+3. Consultar Bing mediante el feed público de Peapix en español; guardar hasta diez imágenes únicas y sus metadatos en el almacenamiento privado de la app.
+4. Mantener TMDB como fuente predeterminada y conservar su slideshow existente.
+5. Copiar las imágenes escogidas a almacenamiento privado para no depender de permisos persistentes del selector.
+6. Permitir una sola imagen de tema, con opacidad configurable; el valor inicial observado en la TV fue 45 %.
+
+### No verificado / atajos de prueba
+
+- La rotación real entre varios nombres no podía observarse con un solo nombre de prueba; se verificaron la selección de modo e intervalo, no el cambio de nombre al transcurrir el periodo.
+- No se verificó el comportamiento en un televisor distinto del emulador y la Caixun Sgamer.
+
+### Cambios residuales en el entorno
+
+- En esta etapa no se modificaron ajustes del televisor ni se instaló una compilación.
+
+---
+
+## 2. Implementación de nombres personalizables
+
+### Implementación
+
+- `app/src/io/freemytv/Prefs.java`: persistencia de lista de nombres, índice fijo, modalidad e intervalo. El modo aleatorio elige un nombre a partir del intervalo de tiempo.
+- `app/src/io/freemytv/SettingsActivity.java`: nueva página **Ajustes → Ajustes de inicio → Nombres**; permite cambiar Fijo/Aleatorio, escoger el nombre fijo, cambiar el intervalo, agregar nombres y solicitar confirmación antes de quitar uno.
+- `app/src/io/freemytv/HomeView.java`: encabezado dinámico «Para ti: {nombre}» y reserva «Para ti» si la lista está vacía.
+- Catálogos `app/assets/i18n/*.json`: cadenas de la página y del diálogo.
+
+### Alcance del cambio
+
+- Toca: ajustes y encabezado de la aplicación Android.
+- Fuera de alcance: nombre de usuario del dispositivo, cuentas del televisor y texto de otras secciones.
+
+### Resultado verificado
+
+- En la Caixun Sgamer se agregó temporalmente `FMTPRUEBA`; la pantalla principal mostró **«Para ti: FMTPRUEBA»**.
+- Se cambió la modalidad a Aleatorio y se observó el valor en los ajustes.
+- Después de la prueba se quitó `FMTPRUEBA`; quedaron Fijo, ningún nombre y el intervalo diario.
+
+### No verificado / atajos de prueba
+
+- El intervalo de cambio aleatorio no se dejó transcurrir para observar una rotación efectiva. La verificación fue del modo y su configuración.
+- En la prueba física se utilizó ADB para escribir el nombre temporal en el diálogo del televisor; no se probó la escritura con el control remoto en manos de una persona.
+
+### Cambios residuales en el entorno
+
+- El nombre temporal fue eliminado desde la propia página de Nombres. La TV quedó sin nombres guardados, como antes de la prueba.
+
+---
+
+## 3. Fuentes y gestión de imágenes del protector
+
+### Implementación
+
+- `app/src/io/freemytv/Prefs.java`: fuente TMDB, Bing o almacenamiento interno; modo fijo/aleatorio, intervalo e imagen fija seleccionada.
+- `app/src/io/freemytv/BingWallpapers.java`: consulta `https://peapix.com/bing/feed?country=es&n=10`, descarga y valida imágenes, conserva un máximo de diez entradas únicas, almacena sus metadatos y expone el estado a la interfaz.
+- `app/src/io/freemytv/WallpaperImages.java`: importación privada de imágenes locales y funciones compartidas de archivo.
+- `app/src/io/freemytv/DreamView.java`: carga de la fuente elegida, presentación fija/aleatoria para las fuentes nuevas y crédito en pantalla para las imágenes Bing.
+- `app/src/io/freemytv/SettingsActivity.java`: fuente, modo, imagen fija, intervalo, actualización de Bing y opción «Ver ahora».
+- Directorio privado de las imágenes Bing: `files/bing-wallpapers/`. Índice de metadatos: `files/bing-wallpapers.json`.
+
+### Alcance del cambio
+
+- Toca: protector de pantalla Android y sus ajustes.
+- Fuera de alcance: protector de webOS/Tizen y configuración del protector nativo del televisor.
+
+### Resultado verificado
+
+- El selector mostró TMDB, Bing y almacenamiento interno.
+- En el emulador, Bing descargó siete imágenes y presentó título y crédito en español.
+- En la Caixun Sgamer, el estado de la página mostró **7/10 imágenes guardadas**. El feed consultado devolvió siete elementos, no diez.
+- En la TV se probaron el modo fijo, el modo aleatorio y el selector de intervalos (diario y opciones en minutos).
+- «Ver ahora» abrió tanto el protector Bing como el protector TMDB. En la vista Bing se observaron la imagen, el título y el crédito en español.
+
+### No verificado / atajos de prueba
+
+- No se forzó una respuesta Peapix con diez imágenes; la respuesta real de las pruebas contenía siete. El límite de diez se verificó por el estado de la función, no llenando el caché hasta diez.
+- En la Caixun Sgamer se abrió el selector de almacenamiento interno y se canceló; no se seleccionó una foto personal ni se probó una imagen local como fuente del protector de principio a fin.
+- No se esperó un intervalo de minutos o de un día para comprobar el cambio automático entre imágenes.
+- No se verificaron todas las variaciones de errores de red ni la recuperación tras reiniciar el televisor sin conexión.
+
+### Cambios residuales en el entorno
+
+- La fuente del protector se restauró a TMDB y el modo aleatorio quedó restaurado después de la prueba temporal de modo fijo.
+- El caché local de siete imágenes Bing permanece en la app de la TV para que siga disponible sin conexión. No se borró.
+
+---
+
+## 4. Imagen de fondo del tema y ajustes de interfaz
+
+### Implementación
+
+- `app/src/io/freemytv/WallpaperImages.java`: copia las imágenes elegidas a `files/wallpaper-images/`, guarda la imagen de tema por separado y ofrece su carga al tema.
+- `app/src/io/freemytv/Prefs.java`: nombre de la imagen de tema y opacidad limitada al rango de 0 a 100 %.
+- `app/src/io/freemytv/HomeView.java`: dibuja la imagen como fondo con la opacidad seleccionada.
+- `app/src/io/freemytv/SettingsActivity.java`: opción de imagen, control de opacidad, vista del archivo seleccionado y confirmación para quitarla.
+- Se añadió truncamiento visual de valores extensos en las filas de ajustes para que no invadan la etiqueta contigua.
+
+### Alcance del cambio
+
+- Toca: tema y pantalla de ajustes Android.
+- Fuera de alcance: cambiar el tema del sistema, la imagen de fondo del televisor o cualquier ajuste de imagen del hardware.
+
+### Resultado verificado
+
+- En el emulador se eligió una imagen sintética y se confirmó su renderizado como fondo del tema.
+- En la TV física se importó una imagen sintética de prueba mediante el selector de fotos; Ajustes confirmó que se guardó.
+- Se comprobó el cambio de opacidad de 45 % a 50 % y el renderizado del fondo en Inicio. Luego se quitó la imagen temporal y se restauró 45 %.
+
+### No verificado / atajos de prueba
+
+- La prueba física usó una imagen sintética creada para este fin, no una fotografía del usuario.
+- No se probó con una colección grande de imágenes ni con todos los formatos y tamaños que puede devolver un proveedor de fotos.
+
+### Cambios residuales en el entorno
+
+- La imagen de tema temporal se quitó desde los ajustes. Se eliminó también el PNG sintético de `/sdcard/Pictures/` y su copia temporal local.
+- El tema quedó en Automático, sin imagen de fondo y con opacidad de 45 %, como antes de la prueba.
+
+---
+
+## 5. Construcción, compatibilidad del selector y depuración
+
+### Problema
+
+La primera ruta de importación de imágenes no abría un selector utilizable en el emulador y la primera compilación señaló errores Java.
+
+### Causa Raíz
+
+- `ACTION_OPEN_DOCUMENT` resolvía al stub `com.android.tv.frameworkpackagestubs/.Stubs$DocumentsStub`, que respondía que no había una aplicación para completar la acción.
+- La compilación inicial reveló problemas de alcance en Java y tipos de pintura incompatibles; se corrigieron antes de continuar las pruebas.
+
+### Alcance del cambio
+
+- Toca: implementación Android y preparación de imágenes locales.
+- Fuera de alcance: agregar dependencias o un sistema Gradle; el proyecto sigue compilándose con el SDK y `build.sh`.
+
+### Solución Aplicada
+
+1. Se usó `ACTION_GET_CONTENT`, manejado por Photo Picker de Google TV en el emulador.
+2. Se corrigieron los errores de compilación y se volvió a generar `FreeMyTV.apk`.
+3. Se retiró el log temporal `theme image probe` de `WallpaperImages.java`.
+4. Se añadió truncamiento de valores largos en filas para mantener separados rótulos y valores.
+
+### Verificación
+
+- `build.sh`: compilación correcta; produjo `FreeMyTV.apk`.
+- `python tools/translate.py --check` con `PYTHONUTF8=1`: `OK: all catalogues match the code (286 keys)`.
+- `git diff --check`: sin errores de whitespace.
+- La instalación y la comprobación visual de fondos se realizaron también en el emulador Android TV.
+
+### No verificado / atajos de prueba
+
+- No se ejecutó `tools/check.sh` completo; por tanto, no se registran aquí resultados de sus pruebas LG, Samsung, ES5 ni de validaciones adicionales del build.
+- No se compiló contra `android-26/android.jar` para repetir la comprobación de compatibilidad de API mínima.
+- El selector se validó en el Photo Picker del emulador y del televisor disponible; no en proveedores alternativos de imágenes.
+
+### Cambios residuales en el entorno
+
+- Las capturas y APK extraídos a `%TEMP%` para la prueba física fueron eliminados al finalizar.
+- No se creó una imagen sintética dentro del repositorio; `git status` conservó solo los cambios de desarrollo existentes.
+
+---
+
+## 6. Instalación de la compilación en la TV física
+
+### Contexto
+
+Se solicitó instalar la versión nueva en la TV conectada por ADB con identificador `5C857EF4F339-rfpAQ4`, teniendo en cuenta que una firma distinta podría impedir la actualización.
+
+### Diagnóstico
+
+- ADB mostraba el dispositivo como `adb-5C857EF4F339-rfpAQ4 (2)._adb-tls-connect._tcp`, transporte 3. Usar el identificador corto como selector no funcionó; se utilizó `adb -t 3`.
+- `dumpsys power` indicó `mWakefulness=Asleep`; se envió `KEYCODE_WAKEUP` y el estado pasó a Awake.
+- La app instalada era `io.freemytv`, `versionName=1.1`, `versionCode=2`.
+- Se extrajo temporalmente el APK instalado y se verificó el certificado con `apksigner`. El digest SHA-256 del certificado instalado y del APK nuevo coincidía: `dc1b5d4929869d72590e0ebc5ba9fb46de0ae144b57bb90164b240017a5dc734`.
+
+### Alcance del cambio
+
+- Toca: instalación de la compilación de Free My TV en el televisor identificado.
+- Fuera de alcance: desinstalar la app, borrar sus datos, cambiar el launcher del sistema o interactuar con los otros dispositivos ADB conectados.
+
+### Verificación
+
+- `adb install -r FreeMyTV.apk`: **Success**.
+- `am start -W -n io.freemytv/.SettingsActivity`: `Status: ok`.
+- La TV permaneció Awake. No se solicitó ni se ejecutó desinstalación porque las firmas coincidían.
+
+### No verificado / atajos de prueba
+
+- No se registró la versión de Android/ROM de la Caixun durante esta instalación.
+- El digest identifica el certificado público, no prueba ni documenta la ubicación o el respaldo del keystore privado.
+
+### Cambios residuales en el entorno
+
+- Se actualizó la app preservando sus datos.
+- No se cambió el modo de inicio configurado en el televisor durante la instalación.
+
+---
+
+## 7. Registro de pruebas funcionales en hardware y estado final
+
+### Qué se comprobaba
+
+Verificar las funciones añadidas en la Caixun Sgamer real, no solamente por compilación o en el emulador, y devolver los ajustes de prueba a su estado previo.
+
+### Métodos
+
+| Vía | Para qué sirve | Trampa medida |
+|---|---|---|
+| ADB con `-t 3` | Enviar teclas, consultar estado, lanzar pantallas y leer logs | El nombre corto de serie no era aceptado por `adb -s`; el identificador visible era un transporte mDNS y el selector reproducible fue `-t 3`. |
+| Capturas `screencap` | Verificar el contenido dibujado en la pantalla real | Una captura negra apareció al iniciar Inicio mientras la TV estaba dormida; se comprobó y despertó la TV antes de concluir que era un problema de renderizado. |
+| Interfaz de la app | Confirmar etiquetas, valores, selección y vistas previas | La navegación DPAD debe comprobarse con capturas entre pasos; una secuencia de teclas demasiado rápida o con foco distinto abre otra página. |
+| Logcat y dumpsys | Contrastar fallos de app con el estado real del sistema | La captura negra no era evidencia de caída: la actividad se abrió mientras el sistema estaba dormido; una captura posterior despierta mostró Inicio correctamente. |
+
+### Resultado
+
+- La app terminó abierta en Inicio de Free My TV, con el encabezado «Para ti» sin nombre.
+- La TV quedó despierta; `topResumedActivity` indicó `io.freemytv/.HomeActivity`.
+- Fuente del protector: TMDB. Se probó «Ver ahora» y apareció una recomendación TMDB.
+- Ajustes de nombres: Fijo, sin nombres, intervalo diario.
+- Tema: Automático, sin imagen y opacidad de 45 %.
+- Los cambios temporales se revirtieron. Se eliminó la imagen sintética importada y se comprobó que el PNG de prueba ya no estaba en `/sdcard/Pictures/`.
+- No se observaron excepciones fatales ni ANR de `io.freemytv` en la consulta final de logcat.
+
+### No verificado / atajos de prueba
+
+- La modalidad aleatoria se observó en ajustes, pero no se aguardó el intervalo para observar un cambio natural del nombre.
+- Se verificó la lista de imágenes Bing y se utilizó una imagen Bing en la vista previa, pero no se esperó un día para comprobar la rotación automática.
+- Se abrió y canceló el Photo Picker de imágenes para el protector interno; no se importó una imagen personal como fuente de protector.
+- No se probó reinicio completo de la TV, activación del protector por inactividad ni vuelta desde el protector nativo del fabricante.
+- No se cambió la modalidad de Inicio entre Free My TV y Original; la prueba no valida el flujo de cambio de launcher ni la reversión de apps del televisor.
+- El caché de Bing observado fue de siete imágenes, debido a la cantidad devuelta por el feed durante la prueba.
+
+### Cambios residuales en el entorno
+
+- Permanece el caché legítimo de **siete imágenes Bing** y sus metadatos en el almacenamiento privado de Free My TV. No es un archivo de prueba y se conservó deliberadamente para disponibilidad sin conexión.
+- No quedaron nombres de prueba, fondo sintético ni archivo sintético en Pictures. La opacidad quedó en 45 % y la fuente TMDB.
+- La TV quedó despierta en Inicio de Free My TV. No se modificó su selección de modo de inicio.
+- No se alteraron los demás dispositivos conectados por ADB ni los ajustes de imagen, sonido, red o cuenta de la TV.
+
+---
+
+## 8. Commit, push y release en el fork
+
+### Contexto
+
+Se solicitó publicar los cambios y el APK en `ferdcard-ux/free-my-tv`, no en el repositorio padre `simbasjungles/free-my-tv`.
+
+### Diagnóstico
+
+- El remoto local `origin` apunta al repositorio padre; por seguridad, no se usó para publicar.
+- La rama `main` del fork estaba en `d84b743`, antepasado de la base local `f2d984c`; no había commits divergentes que requirieran reescritura.
+- El fork no tenía releases ni tags. El release público del repositorio padre `v1.2.0` usa Android `versionCode=3`, `versionName=1.2`.
+- El APK local y la TV física usan el mismo certificado de desarrollo (`SHA-256 dc1b5d4929869d72590e0ebc5ba9fb46de0ae144b57bb90164b240017a5dc734`); ese certificado es distinto del usado por el APK del repositorio padre. El APK se publicará solo en el fork. No se publicará ni se añadirá al repositorio ningún keystore.
+
+### Alcance del cambio
+
+- Toca: `main` y release `v1.3.0` de `ferdcard-ux/free-my-tv`.
+- Fuera de alcance: push al repositorio padre y publicación de APK en el repositorio padre.
+
+### Versión y artefacto
+
+- `app/AndroidManifest.xml`: `versionName=1.3`, `versionCode=4`, superior al APK del padre y a la versión de desarrollo instalada en la TV.
+- El APK de release se construye temporalmente con `config.example.properties`, sin la configuración privada de la máquina. Se restaura `config.properties` después de la compilación y se compara su SHA-256 antes y después.
+- El artefacto `FreeMyTV.apk` se adjunta al release; se excluye del commit por `.gitignore`.
+
+### Verificación
+
+- `tools/check.sh`: build Android, `translate.py --check`, paquetes genéricos webOS/Tizen y chequeo ES5; resultado: `All checks passed`.
+- `apksigner` y `aapt dump badging`: validar firma y metadatos del APK de release.
+- Push y publicación: consultar el commit de la rama `main`, el tag y los assets desde GitHub.
+
+### No verificado / atajos de prueba
+
+- El APK de este fork no comparte el certificado del APK del repositorio padre. Quien migre desde ese APK oficial tendrá que desinstalarlo primero, lo que borra sus datos; la TV usada en esta bitácora tenía la firma local del fork y se pudo actualizar sin ese paso.
+- Esta publicación incluye el APK Android. No se publican artefactos webOS/Tizen ni se modifican los índices de Homebrew en esta operación.
+
+### Cambios residuales en el entorno
+
+- `config.properties` se restauró byte por byte después de preparar el APK sin configuración privada.
+- La llave privada local permanece ignorada por Git; el APK firmado se comparte solo como asset del release del fork.
+- La rama `origin` sigue apuntando al repositorio padre; la publicación usa el remoto del fork.
+
+---
+
+## Historial de Versiones
+
+| Fecha | Versión | Cambios |
+|---|---|---|
+| 2026-10-26 | 1.3.0 / Android 1.3 (versionCode 4) | Nombres personalizables, fuentes TMDB/Bing/almacenamiento interno, fondos de tema con opacidad; pruebas en emulador y Caixun Sgamer y publicación del APK en el fork `ferdcard-ux/free-my-tv`. |

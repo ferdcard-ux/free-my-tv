@@ -22,10 +22,10 @@ Open source. Built with Claude Code. One button to undo.
 - **Trending, not sponsored.** Three fresh picks every hour from what's trending this week and the latest releases, only from apps you already have. Movies and Shows get their own tabs.
 - **Weather and markets, one press away.** The hour-by-hour forecast, sunrise and sunset, and live crypto prices.
 - **Light by day, dark by night.** It follows your city's real sunset, the way your phone does.
-- **A screensaver to match.** Full-screen photos of the picks with a big glass clock.
+- **A screensaver to match.** Full-screen photos from TMDB, Bing, or your own storage, with a big glass clock. Bing images keep their Spanish title and credit, and the latest ten downloaded images stay on the TV for offline use.
 - **Your own photos** (Google TV and Android TV). Send them from your computer (up to 100): the screensaver shows them, and without picks one is the home screen's background each hour.
 - **Fast.** 60 fps, every frame in 16.6 ms, on the TV's own chip. The home screen uses 96 MB of memory instead of 242 MB (−60%).<br><sub>Measured on a 98″ TCL Google TV running Android 14.</sub>
-- **Set up on the TV.** Language, your city, temperature, theme, the weather and prices cards, which coins, and the apps on the shelf, in Free My TV's own settings.
+- **Set up on the TV.** Add names for the “For You” heading, choose a fixed or rotating name, and set a personal theme background with adjustable opacity. Pick a fixed or timed-random screensaver image and preview it with *View now*.
 - **Safe.** No root. Nothing is uninstalled. One button brings back the factory home screen.
 
 ## Install
@@ -148,7 +148,9 @@ On Google TV and Android TV, with the TV connected over adb (see *Install*), sen
 python3 tools/photos.py <TV IP> beach.jpg hills.jpg Holidays/
 ```
 
-They land in the app's own folder on the TV (no permission needed); on Android 11, which keeps adb out of other apps' folders, they go through Free My TV itself. The next time the home screen, the screensaver or Free My TV's settings open, the app imports each one: turned upright, cropped to 16:9, resized for the TV and saved without its GPS and other tags; what was sent is then deleted. The screensaver shows them in the order you sent them, instead of the picks' photos; without a TMDB key, one of them is the home screen's background, a new one every hour. *Home Settings* → *My Photos*: the arrows turn them on or off, OK removes them. Up to 100; JPEG, PNG and WebP, and HEIC on Android 9 and newer.
+They land in the app's own folder on the TV (no permission needed); on Android 11, which keeps adb out of other apps' folders, they go through Free My TV itself. The next time the home screen, the screensaver or Free My TV's settings open, the app imports each one: turned upright, cropped to 16:9, resized for the TV and saved without its GPS and other tags; what was sent is then deleted. Up to 100; JPEG, PNG and WebP, and HEIC on Android 9 and newer. In *Settings* → *Screensaver*, choose *Internal storage* to use these photos or select more images on the TV; choose a fixed image or rotate randomly on a daily or custom-minute interval. *Home Settings* → *My Photos* still controls whether imported photos can be used as the home screen's rotating background.
+
+In *Settings* → *Screensaver*, choose *Bing* to download Spanish Bing wallpapers from Peapix. The cache holds up to ten recent images so the screensaver can keep working offline. *View now* opens a preview without changing the TV's screensaver setting. In *Home Settings* → *Names*, add or remove names, then choose a fixed name or rotate through them. *Home Settings* → *Theme* lets you select one image from TV storage and set its opacity.
 
 ## Going back
 

@@ -24,6 +24,7 @@ import android.view.View;
 import java.io.File;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -113,6 +114,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
     private final Paint shadowPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final Paint glassPaint = new Paint();
     private final Set<String> failed = new HashSet<>();     // Recs.key: a movie and a series can have the same ID
+    private final Random random = new Random(System.currentTimeMillis() ^ android.os.Process.myPid());
     private RuntimeShader glassShader;
     private boolean running, dirty = true, chromeDirty = true;
     private boolean fallback;       // the aurora with the clock (no photos)
@@ -127,15 +129,19 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
     private long minute = -1;
     private String clock = "", date = "";
     private Paint datePaint, clockPaint, weatherPaint, weatherDim, quotePaint, stalePaint;
-    private Paint cornerDate, cornerQuote, cornerStale, cornerClock, labelPaint, metaPaint;
-    private TextPaint titlePaint;
+    private Paint cornerDate, cornerQuote, cornerStale, cornerClock, labelPaint;
+    private TextPaint titlePaint, metaPaint;
 
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             if (!running) return;
             data.refreshIfStale();
-            recs.refreshIfStale();
-            recs.prefetchAll();
+            if (Prefs.screensaverSource().equals("bing")) {
+                BingWallpapers.refresh(getContext(), () -> { if (running) prepareNext(); });
+            } else if (Prefs.screensaverSource().equals("tmdb")) {
+                recs.refreshIfStale();
+                recs.prefetchAll();
+            }
             dirty = true;
             chromeDirty = true;
             prepareNext();
@@ -173,8 +179,12 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         data.addListener(this);
         recs.addListener(this);
         data.refreshIfStale();
-        recs.refreshIfStale();
-        recs.prefetchAll();
+        if (Prefs.screensaverSource().equals("bing")) {
+            BingWallpapers.refresh(getContext(), () -> { if (running) prepareNext(); });
+        } else if (Prefs.screensaverSource().equals("tmdb")) {
+            recs.refreshIfStale();
+            recs.prefetchAll();
+        }
         Photos.importInbox(getContext(), () -> { if (running) prepareNext(); });
         prepareNext();
         handler.postDelayed(tick, 60_000);
@@ -247,7 +257,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         labelPaint.setLetterSpacing(0.1f);
         titlePaint = new TextPaint(Ui.text(Ui.displayMedium, 76 * k, 0xFFFFFFFF));
         titlePaint.setLetterSpacing(0.005f);
-        metaPaint = Ui.text(Ui.medium, 29 * k, 0xC7FFFFFF);
+        metaPaint = new TextPaint(Ui.text(Ui.medium, 29 * k, 0xC7FFFFFF));
         metaPaint.setLetterSpacing(0.014f);
         Symbols.warmWeather(getContext(), 30 * k);   // the corner's
         Symbols.warmWeather(getContext(), 32 * k);   // under the clock
@@ -264,7 +274,22 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
 
     /** Your photos when they are on, otherwise the picks'. */
     private List<Recs.Pick> photos() {
-        return Photos.on(getContext()) ? Photos.picks(getContext()) : recs.showcase();
+        String source = Prefs.screensaverSource();
+        if (source.equals("bing")) return BingWallpapers.picks(getContext());
+        if (source.equals("internal")) {
+            List<Recs.Pick> out = Photos.libraryPicks(getContext());
+            out.addAll(WallpaperImages.picks(getContext()));
+            return out;
+        }
+        return recs.showcase();
+    }
+
+    private boolean fixedImage() {
+        return !Prefs.screensaverSource().equals("tmdb") && Prefs.screensaverMode().equals("fixed");
+    }
+
+    private long showDuration() {
+        return Prefs.screensaverSource().equals("tmdb") ? SHOW_MS : Prefs.screensaverInterval() * 60_000L;
     }
 
     /** Loads the next photo in the background (one at a time); once ready, it comes in at the right moment. */
@@ -273,19 +298,36 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         List<Recs.Pick> list = photos();
         if (list.isEmpty()) return;
         Slide last = incoming != null ? incoming : current;
-        int start = 0;
-        if (last != null) {
-            for (int i = 0; i < list.size(); i++) {
-                if (Recs.key(list.get(i)).equals(Recs.key(last.pick))) {
-                    start = i + 1;
-                    break;
+        Recs.Pick pick = null;
+        if (fixedImage()) {
+            String selected = Prefs.screensaverImage();
+            for (Recs.Pick p : list) {
+                if ((p.kind + ":" + p.photo.getName()).equals(selected)) { pick = p; break; }
+            }
+            if (pick == null) pick = list.get(0);
+        } else if (!Prefs.screensaverSource().equals("tmdb")) {
+            int start = random.nextInt(list.size());
+            for (int i = 0; i < list.size() && pick == null; i++) {
+                Recs.Pick candidate = list.get((start + i) % list.size());
+                if ((last == null || !Recs.key(candidate).equals(Recs.key(last.pick))) && !failed.contains(Recs.key(candidate))) {
+                    pick = candidate;
                 }
             }
-        }
-        Recs.Pick pick = null;
-        for (int i = 0; i < list.size() && pick == null; i++) {
-            Recs.Pick p = list.get((start + i) % list.size());
-            if (!failed.contains(Recs.key(p))) pick = p;
+            if (pick == null && last != null && list.size() == 1) pick = list.get(0);
+        } else {
+            int start = 0;
+            if (last != null) {
+                for (int i = 0; i < list.size(); i++) {
+                    if (Recs.key(list.get(i)).equals(Recs.key(last.pick))) {
+                        start = i + 1;
+                        break;
+                    }
+                }
+            }
+            for (int i = 0; i < list.size() && pick == null; i++) {
+                Recs.Pick candidate = list.get((start + i) % list.size());
+                if (!failed.contains(Recs.key(candidate))) pick = candidate;
+            }
         }
         if (pick == null) {
             if (current == null) fallback = true;
@@ -351,7 +393,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             prepareNext();
             return;
         }
-        if (incoming == null && prepared != null && up >= current.startedAt + SHOW_MS) {
+        if (incoming == null && prepared != null && up >= current.startedAt + showDuration()) {
             incoming = prepared;
             prepared = null;
             incoming.startedAt = up;
@@ -686,7 +728,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
     private void recordCaption(Slide s) {
         Canvas c = s.caption.beginRecording(w, h);
         try {
-            if (s.pick.photo != null) return;   // your photos have no caption
+            if (s.pick.photo != null && !"bing".equals(s.pick.kind)) return;   // personal photos have no caption
             float x = MARGIN * k, metaBase = META_BASE * k, titleBase = metaBase - 58 * k;
             String title = s.pick.title == null ? "" : s.pick.title;
             StaticLayout t = StaticLayout.Builder.obtain(title, 0, title.length(), titlePaint, Math.round(TITLE_W * k))
@@ -694,12 +736,16 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
                     .setIncludePad(false).build();
             float originY = titleBase - t.getLineBaseline(t.getLineCount() - 1);
             float capTop = originY + t.getLineBaseline(0) - Ui.cap(titlePaint);
-            c.drawText(Recs.periodLabel(), x, capTop - 30 * k, labelPaint);
+            c.drawText("bing".equals(s.pick.kind) ? Ui.tr("Bing wallpaper") : Recs.periodLabel(),
+                    x, capTop - 30 * k, labelPaint);
             c.save();
             c.translate(x - Ui.leftBearing(titlePaint, title), originY);
             t.draw(c);
             c.restore();
-            if (s.pick.meta != null && !s.pick.meta.isEmpty()) c.drawText(s.pick.meta, x, metaBase, metaPaint);
+            if (s.pick.meta != null && !s.pick.meta.isEmpty()) {
+                String meta = TextUtils.ellipsize(s.pick.meta, metaPaint, TITLE_W * k, TextUtils.TruncateAt.END).toString();
+                c.drawText(meta, x, metaBase, metaPaint);
+            }
         } finally {
             s.caption.endRecording();
         }

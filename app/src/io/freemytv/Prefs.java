@@ -13,6 +13,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import org.json.JSONArray;
+import org.json.JSONException;
 
 /**
  * Settings changed on the TV itself (Free My TV > Settings). config.properties only gives the first
@@ -118,6 +120,92 @@ final class Prefs {
     }
 
     static void setTheme(String v) { put("theme", v); }
+
+    // MARK: - Home title
+
+    static List<String> names() {
+        List<String> out = new ArrayList<>();
+        try {
+            JSONArray saved = new JSONArray(sp().getString("names", "[]"));
+            for (int i = 0; i < saved.length(); i++) {
+                String name = saved.optString(i).trim();
+                if (!name.isEmpty() && !out.contains(name)) out.add(name);
+            }
+        } catch (JSONException e) {
+            AppLog.w("settings: couldn't read home names: " + e.getMessage());
+        }
+        return out;
+    }
+
+    static void setNames(List<String> values) {
+        JSONArray saved = new JSONArray();
+        for (String value : values) {
+            String name = value.trim();
+            if (!name.isEmpty() && !namesContains(saved, name)) saved.put(name);
+        }
+        put("names", saved.toString());
+    }
+
+    private static boolean namesContains(JSONArray names, String value) {
+        for (int i = 0; i < names.length(); i++) if (value.equals(names.optString(i))) return true;
+        return false;
+    }
+
+    static String nameMode() {
+        return "random".equals(sp().getString("nameMode", "fixed")) ? "random" : "fixed";
+    }
+
+    static void setNameMode(String value) { put("nameMode", "random".equals(value) ? "random" : "fixed"); }
+
+    static int fixedName() { return Math.max(0, sp().getInt("fixedName", 0)); }
+    static void setFixedName(int value) { sp().edit().putInt("fixedName", Math.max(0, value)).apply(); version++; }
+
+    /** Minutes between name changes; 1440 means once a day. */
+    static int nameInterval() { return Math.max(1, sp().getInt("nameInterval", 1440)); }
+    static void setNameInterval(int value) { sp().edit().putInt("nameInterval", Math.max(1, value)).apply(); version++; }
+
+    static String displayName() {
+        List<String> saved = names();
+        if (saved.isEmpty()) return "";
+        if (nameMode().equals("fixed")) return saved.get(Math.min(fixedName(), saved.size() - 1));
+        long bucket = System.currentTimeMillis() / (nameInterval() * 60_000L);
+        long cycle = bucket / saved.size();
+        int first = (int) Math.floorMod(cycle * 1_103_515_245L + 12_345L, saved.size());
+        return saved.get((first + (int) (bucket % saved.size())) % saved.size());
+    }
+
+    // MARK: - Screensaver images
+
+    /** Missing source keeps the original behavior for existing installations with imported photos. */
+    static String screensaverSource() {
+        String saved = sp().getString("screensaverSource", null);
+        if (saved == null) return photos() && !Photos.files(context()).isEmpty() ? "internal" : "tmdb";
+        return saved.equals("bing") || saved.equals("internal") ? saved : "tmdb";
+    }
+
+    static void setScreensaverSource(String value) {
+        put("screensaverSource", value.equals("bing") || value.equals("internal") ? value : "tmdb");
+    }
+
+    static String screensaverMode() {
+        return "random".equals(sp().getString("screensaverMode", "random")) ? "random" : "fixed";
+    }
+
+    static void setScreensaverMode(String value) { put("screensaverMode", "random".equals(value) ? "random" : "fixed"); }
+
+    /** Minutes between screen saver image changes; 1440 means once a day. */
+    static int screensaverInterval() { return Math.max(1, sp().getInt("screensaverInterval", 1440)); }
+    static void setScreensaverInterval(int value) { sp().edit().putInt("screensaverInterval", Math.max(1, value)).apply(); version++; }
+
+    static String screensaverImage() { return sp().getString("screensaverImage", ""); }
+    static void setScreensaverImage(String value) { put("screensaverImage", value == null ? "" : value); }
+
+    // MARK: - Theme image
+
+    static String themeImage() { return sp().getString("themeImage", ""); }
+    static void setThemeImage(String value) { put("themeImage", value == null ? "" : value); }
+    static int themeImageOpacity() { return Math.max(0, Math.min(100, sp().getInt("themeImageOpacity", 45))); }
+    static void setThemeImageOpacity(int value) { sp().edit().putInt("themeImageOpacity", Math.max(0, Math.min(100, value))).apply(); version++; }
 
     // MARK: - City
 

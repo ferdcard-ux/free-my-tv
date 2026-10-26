@@ -41,7 +41,7 @@ final class Photos {
     /** At most this many (about 300 KB each); later ones wait in the folder until some are removed. */
     static final int MAX = 100;
     /** Smaller ones are icons and thumbnails, not photos. */
-    private static final int MIN_SIDE = 640;
+    static final int MIN_SIDE = 640;
 
     private static File dir(Context c) {
         return new File(c.getFilesDir(), "photos");
@@ -102,8 +102,13 @@ final class Photos {
 
     /** For the screensaver: the photos as picks (no title, no caption). */
     static List<Recs.Pick> picks(Context c) {
+        if (!on(c)) return new ArrayList<>();
+        return libraryPicks(c);
+    }
+
+    /** The imported library, independent of the legacy My Photos home-screen toggle. */
+    static List<Recs.Pick> libraryPicks(Context c) {
         List<Recs.Pick> out = new ArrayList<>();
-        if (!on(c)) return out;
         List<File> list = files(c);
         for (int i = 0; i < list.size(); i++) {
             Recs.Pick p = new Recs.Pick();
@@ -294,12 +299,16 @@ final class Photos {
      * Then it's drawn straight into the w × h result and only that is turned. Where the region decoder can't read the
      * file, the whole photo is decoded instead, at about 4 MP at most (as before).
      */
-    private static Bitmap decode(File f, int w, int h) throws IOException {
+    static Bitmap decode(File f, int w, int h) throws IOException {
+        return decode(f, w, h, MIN_SIDE);
+    }
+
+    static Bitmap decode(File f, int w, int h, int minimumSide) throws IOException {
         BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
         BitmapFactory.decodeFile(f.getPath(), bounds);
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
-        if (Math.min(bounds.outWidth, bounds.outHeight) < MIN_SIDE) return null;
+        if (Math.min(bounds.outWidth, bounds.outHeight) < minimumSide) return null;
         int degrees = rotation(f);
         boolean sideways = degrees == 90 || degrees == 270;
         // Everything below is in the photo's stored orientation: a sideways one is cropped and sized as h × w.

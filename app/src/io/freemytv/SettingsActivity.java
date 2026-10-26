@@ -5,6 +5,7 @@ import android.app.AlertDialog;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.BlurMaskFilter;
@@ -33,6 +34,7 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.io.File;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -45,6 +47,7 @@ import java.util.Set;
  * (HomeMode) and this screen only asks for it and follows the state file.
  */
 public class SettingsActivity extends Activity {
+    private static final int PICK_SCREENSAVER_IMAGES = 71, PICK_THEME_IMAGE = 72;
     private SettingsView view;
     private DreamView preview;   // "Screensaver": the screensaver right here, without changing the system setting
 
@@ -97,6 +100,25 @@ public class SettingsActivity extends Activity {
         super.onPause();
     }
 
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (view == null || resultCode != RESULT_OK) return;
+        if (requestCode == PICK_SCREENSAVER_IMAGES) {
+            view.importScreensaverImages(WallpaperImages.selectedUris(data));
+        } else if (requestCode == PICK_THEME_IMAGE) {
+            List<Uri> selected = WallpaperImages.selectedUris(data);
+            view.importThemeImage(selected.isEmpty() ? null : selected.get(0));
+        }
+    }
+
+    private void pickImages(boolean theme) {
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("image/*");
+        if (!theme) intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        startActivityForResult(intent, theme ? PICK_THEME_IMAGE : PICK_SCREENSAVER_IMAGES);
+    }
+
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         if (preview != null) {
             // Like the real screensaver: arrows, OK or Back close it (other keys go on to the system).
@@ -134,7 +156,7 @@ public class SettingsActivity extends Activity {
 
     static final class SettingsView extends View implements Choreographer.FrameCallback {
         private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5,
-                POWER = 6;
+                POWER = 6, NAMES = 7, SCREENSAVER = 8, THEME = 9;
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
         private static final int PICK_VISIBLE = 9;
         private static final float LIST_X = 1000, LIST_R = 1824, LIST_TOP = 186, ROW_GAP = 8, CHOICE_H = 104;
@@ -156,7 +178,9 @@ public class SettingsActivity extends Activity {
         private final List<String> shelfOrder = new ArrayList<>();
         private boolean editingTop;
         private int pickFor, pickCurrent, pickScroll;   // pickFor: the remote button (index + 1)
-        private static final int PICK_CITY = 0, PICK_LANGUAGE = -1, PICK_SLEEP = -2, PICK_PLACE = -3;
+        private static final int PICK_CITY = 0, PICK_LANGUAGE = -1, PICK_SLEEP = -2, PICK_PLACE = -3,
+                PICK_NAME = -4, PICK_NAME_INTERVAL = -5, PICK_SAVER_SOURCE = -6, PICK_SAVER_IMAGE = -7,
+                PICK_SAVER_INTERVAL = -8, PICK_THEME_APPEARANCE = -9;
         /** Sleep Timer's pickers (PICK_SLEEP and below): their choices as {value, name}, and the value now. */
         private final List<String[]> choices = new ArrayList<>();
         private String choiceNow = "";
@@ -175,6 +199,7 @@ public class SettingsActivity extends Activity {
         private int whyState = -1;
         private String errorShown;
         private final Spoken spoken;
+        private final TextPaint valueFit = new TextPaint();
         private long startedAt, lastNanos, pendingAt, lastSky;
         private int w, h;
         private float k = 1;
@@ -253,7 +278,7 @@ public class SettingsActivity extends Activity {
                                 : freeActive() ? "Free My TV" : Ui.tr("Original");
                         return Ui.trf("Home Screen, {mode}", "mode", value);
                     }
-                    String[] names = {Ui.tr("Screensaver, preview"), Ui.tr("Home Settings"),
+                    String[] names = {Ui.tr("Screensaver"), Ui.tr("Home Settings"),
                             Ui.tr("Shelf"), Ui.tr("Top Buttons"), Ui.tr("Remote Buttons"), Ui.tr("Sleep Timer"),
                             Ui.tr("TV Settings")};
                     return row - 1 < names.length ? names[row - 1] : "";
@@ -270,6 +295,13 @@ public class SettingsActivity extends Activity {
                     boolean keys = screen == REMOTE_KEYS;
                     String[] labels = listLabels(), values = listValues();
                     int at = keys ? row : pickScroll + row;
+                    return at < labels.length ? labels[at] + ", " + values[at] : "";
+                }
+                case NAMES:
+                case SCREENSAVER:
+                case THEME: {
+                    String[] labels = listLabels(), values = listValues();
+                    int at = pickScroll + row;
                     return at < labels.length ? labels[at] + ", " + values[at] : "";
                 }
                 case PICKER: {
@@ -354,6 +386,7 @@ public class SettingsActivity extends Activity {
             rowLabel = Ui.text(Ui.medium, 30 * k, 0xF2FFFFFF);
             rowValue = Ui.text(Ui.regular, 28 * k, 0x8CFFFFFF);
             rowValue.setTextAlign(Paint.Align.RIGHT);
+            valueFit.set(rowValue);
             rowSub = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             header = Ui.text(Ui.semibold, 21 * k, 0x73FFFFFF);
             header.setLetterSpacing(0.06f);
@@ -394,6 +427,9 @@ public class SettingsActivity extends Activity {
                 case PICKER: return Math.min(PICK_VISIBLE, pickLabels.size());
                 case SHELF_EDIT: return Math.min(PICK_VISIBLE, shelfRows.size());
                 case POWER: return powerRows().length;
+                case NAMES: return Math.min(SETTINGS_VISIBLE, nameLabels().length);
+                case SCREENSAVER: return saverLabels().length;
+                case THEME: return themeLabels().length;
                 default: return Prefs.KEYS.length;
             }
         }
@@ -433,7 +469,7 @@ public class SettingsActivity extends Activity {
             String[] labels = {Ui.tr("Home Screen"), Ui.tr("Screensaver"),
                     Ui.tr("Home Settings"), Ui.tr("Shelf"), Ui.tr("Top Buttons"),
                     Ui.tr("Remote Buttons"), Ui.tr("Sleep Timer"), Ui.tr("TV Settings")};
-            String[] values = {working ? "" : mode, Ui.tr("Preview"), "", "", "", "", "", ""};
+            String[] values = {working ? "" : mode, Ui.tr("Settings"), "", "", "", "", "", ""};
             for (int i = 0; i < labels.length; i++) {
                 float y = (MAIN_TOP + i * (ROW_H + MAIN_GAP)) * k;
                 rowRect.set(LIST_X * k, y, LIST_R * k, y + ROW_H * k);
@@ -643,7 +679,8 @@ public class SettingsActivity extends Activity {
                 case KeyEvent.KEYCODE_DPAD_RIGHT:
                     if (down && screen == SHELF_EDIT) {
                         moveShelfApp(e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
-                    } else if (down && (screen == HOME_SETTINGS || screen == REMOTE_KEYS || screen == POWER)) {
+                    } else if (down && (screen == HOME_SETTINGS || screen == REMOTE_KEYS || screen == POWER || screen == NAMES
+                            || screen == SCREENSAVER || screen == THEME)) {
                         adjust(e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
                     }
                     whyRows = null;   // a value or the rows' order changed: what each row needs may have too
@@ -668,10 +705,12 @@ public class SettingsActivity extends Activity {
                         if (e.getRepeatCount() == 0) backDown = true;
                     } else {
                         if (backDown && !e.isCanceled()) {
-                            if (screen == PICKER && pickFor <= PICK_SLEEP) {
+                            if (screen == PICKER && (pickFor == PICK_SLEEP || pickFor == PICK_PLACE)) {
                                 focus = powerFocus(pickFor == PICK_SLEEP ? P_SLEEP : P_WHERE);
                                 pickScroll = 0;   // the picker's scroll isn't this short list's
                                 screen = POWER;
+                            } else if (screen == PICKER && isSettingsPicker(pickFor)) {
+                                returnFromSettingsPicker(false);
                             } else if (screen == PICKER && (pickFor == PICK_CITY || pickFor == PICK_LANGUAGE)) {
                                 focus = pickFor == PICK_CITY ? CITY_ROW : 0;
                                 pickScroll = 0;   // both rows are on the list's first screen
@@ -679,6 +718,13 @@ public class SettingsActivity extends Activity {
                             } else if (screen == PICKER) {
                                 focus = pickFor - 1;
                                 screen = REMOTE_KEYS;
+                            } else if (screen == NAMES || screen == THEME) {
+                                focus = screen == NAMES ? NAMES_ROW : THEME_ROW;
+                                pickScroll = 0;
+                                screen = HOME_SETTINGS;
+                            } else if (screen == SCREENSAVER) {
+                                focus = 1;
+                                screen = MAIN;
                             } else {
                                 focus = screen == HOME_SETTINGS ? 2 : screen == SHELF_EDIT ? (editingTop ? 4 : 3)
                                         : screen == REMOTE_KEYS ? 5 : screen == POWER ? 6 : 0;
@@ -698,8 +744,8 @@ public class SettingsActivity extends Activity {
         // MARK: - Home Settings and Remote Buttons
 
         private static final String[] UNITS = {"auto", "C", "F"}, THEMES = {"auto", "light", "dark"};
-        /** Home Settings: language, temperature, theme, my photos, sounds, weather, city, quotes, then one row per coin. */
-        private static final int PHOTOS_ROW = 3, CITY_ROW = 6, COIN_ROWS = 8;
+        /** Home Settings: language, temperature, names, theme, photos, sounds, weather, city, quotes, then coins. */
+        private static final int NAMES_ROW = 2, THEME_ROW = 3, PHOTOS_ROW = 4, CITY_ROW = 7, COIN_ROWS = 9;
         /** Home Settings rows on screen at once (what fits above the hints at 1080p); a longer list scrolls. */
         private static final int SETTINGS_VISIBLE = 10;
 
@@ -711,6 +757,7 @@ public class SettingsActivity extends Activity {
             List<String> l = new ArrayList<>();
             l.add(Ui.tr("Language"));
             l.add(Ui.tr("Temperature"));
+            l.add(Ui.tr("Names"));
             l.add(Ui.tr("Theme"));
             l.add(Ui.tr("My Photos"));
             l.add(Ui.tr("Navigation sounds"));
@@ -731,18 +778,438 @@ public class SettingsActivity extends Activity {
             v[0] = lang.equals("auto") ? Ui.tr("Automatic") : Ui.languageName(lang);
             String unit = Prefs.temperature();
             v[1] = unit.equals("C") ? "°C" : unit.equals("F") ? "°F" : Ui.tr("unit|Automatic");
+            v[NAMES_ROW] = Prefs.nameMode().equals("random") ? Ui.tr("Random") : Ui.tr("Fixed");
             String theme = Prefs.theme();
-            v[2] = theme.equals("light") ? Ui.tr("Light") : theme.equals("dark") ? Ui.tr("Dark") : Ui.tr("Automatic");
+            v[THEME_ROW] = theme.equals("light") ? Ui.tr("Light") : theme.equals("dark") ? Ui.tr("Dark") : Ui.tr("Automatic");
             int photos = Photos.files(getContext()).size();
             v[PHOTOS_ROW] = photos == 0 ? Ui.tr("photos|None")
                     : Prefs.photos() ? Ui.plural("plural|one:{n} photo|other:{n} photos", photos) : Ui.tr("Off");
-            v[4] = onOff(Prefs.sounds());
-            v[5] = onOff(Prefs.weather());
+            v[5] = onOff(Prefs.sounds());
+            v[6] = onOff(Prefs.weather());
             v[CITY_ROW] = !cityStatus.isEmpty() ? cityStatus : Prefs.city().isEmpty() ? "—" : Prefs.city();
-            v[7] = onOff(Prefs.quotes());
+            v[8] = onOff(Prefs.quotes());
             // No quotes widget, nowhere to show prices: the coins read as off (and stay locked) until it is back on.
             for (int i = COIN_ROWS; i < v.length; i++) v[i] = onOff(Prefs.quotes() && Prefs.coin(i - COIN_ROWS));
             return v;
+        }
+
+        private String[] nameLabels() {
+            List<String> labels = new ArrayList<>();
+            labels.add(Ui.tr("Presentation"));
+            labels.add(Ui.tr("Fixed name"));
+            labels.add(Ui.tr("Change every"));
+            labels.add(Ui.tr("Add a name"));
+            for (String name : Prefs.names()) labels.add(Ui.trf("Remove {name}", "name", name));
+            return labels.toArray(new String[0]);
+        }
+
+        private String[] nameValues() {
+            List<String> names = Prefs.names();
+            String[] values = new String[nameLabels().length];
+            values[0] = Prefs.nameMode().equals("random") ? Ui.tr("Random") : Ui.tr("Fixed");
+            values[1] = names.isEmpty() ? Ui.tr("None yet.") : names.get(Math.min(Prefs.fixedName(), names.size() - 1));
+            values[2] = intervalLabel(Prefs.nameInterval());
+            values[3] = Ui.tr("Add");
+            for (int i = 0; i < names.size(); i++) values[i + 4] = Ui.tr("Remove");
+            return values;
+        }
+
+        private String[] saverLabels() {
+            List<String> labels = new ArrayList<>();
+            labels.add(Ui.tr("View now"));
+            labels.add(Ui.tr("Image source"));
+            String source = Prefs.screensaverSource();
+            if (!source.equals("tmdb")) {
+                labels.add(Ui.tr("Presentation"));
+                labels.add(Prefs.screensaverMode().equals("fixed") ? Ui.tr("Fixed image") : Ui.tr("Change every"));
+                labels.add(source.equals("bing") ? Ui.tr("Bing images") : Ui.tr("Add images"));
+                if (source.equals("bing")) labels.add(Ui.tr("Refresh Bing images"));
+            }
+            return labels.toArray(new String[0]);
+        }
+
+        private String[] saverValues() {
+            String[] labels = saverLabels();
+            String[] values = new String[labels.length];
+            values[0] = Ui.tr("Preview");
+            values[1] = saverSourceLabel(Prefs.screensaverSource());
+            if (labels.length > 2) {
+                values[2] = Prefs.screensaverMode().equals("fixed") ? Ui.tr("Fixed") : Ui.tr("Random");
+                values[3] = Prefs.screensaverMode().equals("fixed") ? selectedSaverImage() : intervalLabel(Prefs.screensaverInterval());
+                values[4] = Prefs.screensaverSource().equals("bing")
+                        ? BingWallpapers.status(getContext())
+                        : Ui.plural("plural|one:{n} image|other:{n} images", localImages().size());
+                if (labels.length > 5) values[5] = Ui.tr("Refresh now");
+            }
+            return values;
+        }
+
+        private String[] themeLabels() {
+            return new String[] {Ui.tr("Appearance"), Ui.tr("Background image"), Ui.tr("Image opacity"),
+                    Ui.tr("Remove background image")};
+        }
+
+        private String[] themeValues() {
+            File file = WallpaperImages.themeFile(getContext());
+            return new String[] {
+                    Prefs.theme().equals("light") ? Ui.tr("Light") : Prefs.theme().equals("dark") ? Ui.tr("Dark") : Ui.tr("Automatic"),
+                    file == null ? Ui.tr("None yet.") : WallpaperImages.fileLabel(file),
+                    Prefs.themeImageOpacity() + "%",
+                    file == null ? Ui.tr("Off") : Ui.tr("Remove")
+            };
+        }
+
+        private static String saverSourceLabel(String source) {
+            return source.equals("bing") ? Ui.tr("Bing") : source.equals("internal")
+                    ? Ui.tr("Internal storage") : Ui.tr("TMDB");
+        }
+
+        private static String intervalLabel(int minutes) {
+            return minutes == 1440 ? Ui.tr("Every day") : Ui.trf("Every {n} minutes", "n", minutes);
+        }
+
+        private String selectedSaverImage() {
+            String selected = Prefs.screensaverImage();
+            if (Prefs.screensaverSource().equals("bing")) {
+                for (BingWallpapers.Entry entry : BingWallpapers.entries(getContext())) {
+                    if (("bing:bing-" + entry.id + ".jpg").equals(selected)) return entry.title;
+                }
+                List<BingWallpapers.Entry> images = BingWallpapers.entries(getContext());
+                return images.isEmpty() ? Ui.tr("No images downloaded yet.") : images.get(0).title;
+            }
+            List<Recs.Pick> images = localImages();
+            for (Recs.Pick image : images) {
+                if ((image.kind + ":" + image.photo.getName()).equals(selected)) return WallpaperImages.fileLabel(image.photo);
+            }
+            return images.isEmpty() ? Ui.tr("No images added yet.") : WallpaperImages.fileLabel(images.get(0).photo);
+        }
+
+        private List<Recs.Pick> localImages() {
+            List<Recs.Pick> images = Photos.libraryPicks(getContext());
+            images.addAll(WallpaperImages.picks(getContext()));
+            return images;
+        }
+
+        private String localImageLabel(Recs.Pick pick, int index) {
+            String name = WallpaperImages.fileLabel(pick.photo);
+            return name.equals(Ui.tr("My Photos")) ? Ui.trf("Image {n}", "n", index + 1) : name;
+        }
+
+        private static boolean isSettingsPicker(int which) {
+            return which == PICK_NAME || which == PICK_NAME_INTERVAL || which == PICK_SAVER_SOURCE
+                    || which == PICK_SAVER_IMAGE || which == PICK_SAVER_INTERVAL || which == PICK_THEME_APPEARANCE;
+        }
+
+        private void openNamePicker() {
+            List<String> names = Prefs.names();
+            if (names.isEmpty()) {
+                Toast.makeText(activity, Ui.tr("Add a name first."), Toast.LENGTH_SHORT).show();
+                return;
+            }
+            List<String[]> options = new ArrayList<>();
+            for (int i = 0; i < names.size(); i++) options.add(new String[] {String.valueOf(i), names.get(i)});
+            openChoices(PICK_NAME, options, String.valueOf(Math.min(Prefs.fixedName(), names.size() - 1)));
+        }
+
+        private void openIntervalPicker(int which, int minutes) {
+            List<String[]> options = new ArrayList<>();
+            options.add(new String[] {"1440", Ui.tr("Every day")});
+            for (int value : new int[] {5, 15, 30, 60, 120, 360}) {
+                options.add(new String[] {String.valueOf(value), intervalLabel(value)});
+            }
+            options.add(new String[] {"custom", Ui.tr("Custom minutes")});
+            openChoices(which, options, minutes == 1440 ? "1440" : String.valueOf(minutes));
+        }
+
+        private void openSourcePicker() {
+            List<String[]> options = new ArrayList<>();
+            options.add(new String[] {"tmdb", saverSourceLabel("tmdb")});
+            options.add(new String[] {"bing", saverSourceLabel("bing")});
+            options.add(new String[] {"internal", saverSourceLabel("internal")});
+            openChoices(PICK_SAVER_SOURCE, options, Prefs.screensaverSource());
+        }
+
+        private void openSaverImagePicker() {
+            List<String[]> options = new ArrayList<>();
+            if (Prefs.screensaverSource().equals("bing")) {
+                for (BingWallpapers.Entry entry : BingWallpapers.entries(getContext())) {
+                    options.add(new String[] {"bing:" + "bing-" + entry.id + ".jpg", entry.title});
+                }
+            } else {
+                List<Recs.Pick> images = localImages();
+                for (int i = 0; i < images.size(); i++) {
+                    Recs.Pick image = images.get(i);
+                    options.add(new String[] {image.kind + ":" + image.photo.getName(), localImageLabel(image, i)});
+                }
+            }
+            if (options.isEmpty()) {
+                Toast.makeText(activity, Prefs.screensaverSource().equals("bing")
+                        ? Ui.tr("No images downloaded yet.") : Ui.tr("No images added yet."), Toast.LENGTH_SHORT).show();
+                return;
+            }
+            openChoices(PICK_SAVER_IMAGE, options, Prefs.screensaverImage());
+        }
+
+        private void addName() {
+            EditText field = new EditText(activity);
+            field.setSingleLine(true);
+            field.setHint(Ui.tr("Type a name"));
+            field.setImeOptions(EditorInfo.IME_ACTION_DONE);
+            AlertDialog dialog = new AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle(Ui.tr("Add a name"))
+                    .setView(field)
+                    .setPositiveButton(Ui.tr("Add"), (d, which) -> saveName(field.getText().toString()))
+                    .setNegativeButton(Ui.tr("Cancel"), null)
+                    .create();
+            field.setOnEditorActionListener((v, action, event) -> {
+                dialog.dismiss();
+                saveName(field.getText().toString());
+                return true;
+            });
+            dialog.show();
+        }
+
+        private void saveName(String value) {
+            String name = value.trim();
+            List<String> names = Prefs.names();
+            if (name.isEmpty()) {
+                Toast.makeText(activity, Ui.tr("Enter a name."), Toast.LENGTH_SHORT).show();
+                return;
+            }
+            if (names.contains(name)) {
+                Toast.makeText(activity, Ui.tr("That name is already on the list."), Toast.LENGTH_SHORT).show();
+                return;
+            }
+            names.add(name);
+            Prefs.setNames(names);
+            if (names.size() == 1) Prefs.setFixedName(0);
+            invalidate();
+            spoken.focusMoved();
+        }
+
+        private void removeName(int index) {
+            List<String> names = Prefs.names();
+            if (index < 0 || index >= names.size()) return;
+            String name = names.get(index);
+            new AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle(Ui.trf("Remove {name}?", "name", name))
+                    .setPositiveButton(Ui.tr("Remove"), (d, which) -> {
+                        List<String> updated = Prefs.names();
+                        updated.remove(name);
+                        Prefs.setNames(updated);
+                        if (Prefs.fixedName() >= updated.size()) Prefs.setFixedName(Math.max(0, updated.size() - 1));
+                        focus = Math.min(focus, Math.max(0, nameLabels().length - 1));
+                        pickScroll = Math.min(pickScroll, Math.max(0, nameLabels().length - rowCount()));
+                        invalidate();
+                        spoken.focusMoved();
+                    })
+                    .setNegativeButton(Ui.tr("Cancel"), null)
+                    .show();
+        }
+
+        private void askInterval(boolean names) {
+            int current = names ? Prefs.nameInterval() : Prefs.screensaverInterval();
+            EditText field = new EditText(activity);
+            field.setSingleLine(true);
+            field.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+            field.setText(String.valueOf(current));
+            field.setSelection(field.length());
+            field.setHint(Ui.tr("Minutes"));
+            AlertDialog dialog = new AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle(Ui.tr("Change interval"))
+                    .setView(field)
+                    .setPositiveButton(Ui.tr("Save"), (d, which) -> saveInterval(field.getText().toString(), names))
+                    .setNegativeButton(Ui.tr("Cancel"), null)
+                    .create();
+            field.setOnEditorActionListener((v, action, event) -> {
+                dialog.dismiss();
+                saveInterval(field.getText().toString(), names);
+                return true;
+            });
+            dialog.show();
+        }
+
+        private void saveInterval(String value, boolean names) {
+            try {
+                int minutes = Integer.parseInt(value.trim());
+                if (minutes < 1 || minutes > 10080) throw new NumberFormatException();
+                if (names) Prefs.setNameInterval(minutes); else Prefs.setScreensaverInterval(minutes);
+                invalidate();
+            } catch (NumberFormatException e) {
+                Toast.makeText(activity, Ui.tr("Enter a number from 1 to 10080."), Toast.LENGTH_SHORT).show();
+            }
+        }
+
+        private void adjustNames(int dir) {
+            int row = pickScroll + focus;
+            if (row == 0) {
+                Prefs.setNameMode(Prefs.nameMode().equals("fixed") ? "random" : "fixed");
+            } else if (row == 1) {
+                List<String> names = Prefs.names();
+                if (!names.isEmpty()) Prefs.setFixedName((Prefs.fixedName() + dir + names.size()) % names.size());
+            } else if (row == 2) {
+                Prefs.setNameInterval(stepInterval(Prefs.nameInterval(), dir));
+            }
+        }
+
+        private void adjustScreensaver(int dir) {
+            int row = pickScroll + focus;
+            String source = Prefs.screensaverSource();
+            if (row == 1) {
+                String[] sources = {"tmdb", "bing", "internal"};
+                int at = java.util.Arrays.asList(sources).indexOf(source);
+                String next = sources[(at + dir + sources.length) % sources.length];
+                Prefs.setScreensaverSource(next);
+                if (next.equals("bing")) BingWallpapers.refresh(getContext(), () -> { invalidate(); spoken.focusMoved(); });
+            } else if (row == 2 && !source.equals("tmdb")) {
+                Prefs.setScreensaverMode(Prefs.screensaverMode().equals("fixed") ? "random" : "fixed");
+            } else if (row == 3 && !source.equals("tmdb")) {
+                if (Prefs.screensaverMode().equals("random")) {
+                    Prefs.setScreensaverInterval(stepInterval(Prefs.screensaverInterval(), dir));
+                } else {
+                    stepSaverImage(dir);
+                }
+            }
+            invalidate();
+            spoken.focusMoved();
+        }
+
+        private static int stepInterval(int current, int dir) {
+            int[] values = {5, 15, 30, 60, 120, 360, 1440};
+            int at = 0;
+            for (int i = 0; i < values.length; i++) if (values[i] == current) at = i;
+            return values[(at + dir + values.length) % values.length];
+        }
+
+        private void stepSaverImage(int dir) {
+            List<Recs.Pick> images = Prefs.screensaverSource().equals("bing")
+                    ? BingWallpapers.picks(getContext()) : localImages();
+            if (images.isEmpty()) return;
+            int at = 0;
+            for (int i = 0; i < images.size(); i++) {
+                Recs.Pick image = images.get(i);
+                if ((image.kind + ":" + image.photo.getName()).equals(Prefs.screensaverImage())) at = i;
+            }
+            Recs.Pick next = images.get((at + dir + images.size()) % images.size());
+            Prefs.setScreensaverImage(next.kind + ":" + next.photo.getName());
+        }
+
+        private void adjustTheme(int dir) {
+            int row = pickScroll + focus;
+            if (row == 0) {
+                int at = java.util.Arrays.asList(THEMES).indexOf(Prefs.theme());
+                Prefs.setTheme(THEMES[(at + dir + THEMES.length) % THEMES.length]);
+                SleepOverlay.update(getContext());
+            } else if (row == 2) {
+                Prefs.setThemeImageOpacity(Prefs.themeImageOpacity() + dir * 5);
+            }
+        }
+
+        private void activateNames() {
+            int row = pickScroll + focus;
+            if (row == 0) {
+                Prefs.setNameMode(Prefs.nameMode().equals("fixed") ? "random" : "fixed");
+            } else if (row == 1) {
+                openNamePicker();
+            } else if (row == 2) {
+                openIntervalPicker(PICK_NAME_INTERVAL, Prefs.nameInterval());
+            } else if (row == 3) {
+                addName();
+            } else {
+                removeName(row - 4);
+            }
+        }
+
+        private void activateScreensaver() {
+            int row = pickScroll + focus;
+            String source = Prefs.screensaverSource();
+            if (row == 0) {
+                pause();
+                activity.showPreview();
+            } else if (row == 1) {
+                openSourcePicker();
+            } else if (row == 2 && !source.equals("tmdb")) {
+                Prefs.setScreensaverMode(Prefs.screensaverMode().equals("fixed") ? "random" : "fixed");
+            } else if (row == 3 && !source.equals("tmdb")) {
+                if (Prefs.screensaverMode().equals("fixed")) openSaverImagePicker();
+                else openIntervalPicker(PICK_SAVER_INTERVAL, Prefs.screensaverInterval());
+            } else if (row == 4 && source.equals("internal")) {
+                activity.pickImages(false);
+            } else if (row == 5 && source.equals("bing")) {
+                refreshBing(true);
+                return;
+            }
+            invalidate();
+            spoken.focusMoved();
+        }
+
+        private void activateTheme() {
+            int row = pickScroll + focus;
+            if (row == 0) {
+                List<String[]> options = new ArrayList<>();
+                options.add(new String[] {"auto", Ui.tr("Automatic")});
+                options.add(new String[] {"light", Ui.tr("Light")});
+                options.add(new String[] {"dark", Ui.tr("Dark")});
+                openChoices(PICK_THEME_APPEARANCE, options, Prefs.theme());
+            } else if (row == 1) {
+                activity.pickImages(true);
+            } else if (row == 2) {
+                adjustTheme(1);
+            } else if (WallpaperImages.themeFile(getContext()) != null) {
+                new AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                        .setTitle(Ui.tr("Remove background image?"))
+                        .setPositiveButton(Ui.tr("Remove"), (d, which) -> {
+                            WallpaperImages.clearTheme(getContext());
+                            invalidate();
+                            spoken.focusMoved();
+                        })
+                        .setNegativeButton(Ui.tr("Cancel"), null)
+                        .show();
+            }
+        }
+
+        private void refreshBing(boolean force) {
+            BingWallpapers.refresh(getContext(), force, () -> {
+                invalidate();
+                spoken.focusMoved();
+                Toast.makeText(activity, BingWallpapers.status(getContext()), Toast.LENGTH_LONG).show();
+            });
+        }
+
+        void importScreensaverImages(List<Uri> uris) {
+            if (uris.isEmpty()) return;
+            WallpaperImages.importScreensaver(getContext(), uris, (count, error) -> {
+                if (count > 0) {
+                    Toast.makeText(activity, Ui.trf("Added {n} images.", "n", count), Toast.LENGTH_LONG).show();
+                    if (Prefs.screensaverImage().isEmpty()) {
+                        List<Recs.Pick> images = localImages();
+                        if (!images.isEmpty()) {
+                            Recs.Pick first = images.get(0);
+                            Prefs.setScreensaverImage(first.kind + ":" + first.photo.getName());
+                        }
+                    }
+                }
+                if (!error.isEmpty()) {
+                    Toast.makeText(activity, Ui.tr("Couldn't add the selected images."), Toast.LENGTH_LONG).show();
+                    AppLog.w("screensaver image import: " + error);
+                }
+                invalidate();
+                spoken.focusMoved();
+            });
+        }
+
+        void importThemeImage(Uri uri) {
+            if (uri == null) return;
+            WallpaperImages.importTheme(getContext(), uri, (count, error) -> {
+                if (count > 0) {
+                    Toast.makeText(activity, Ui.tr("Background image saved."), Toast.LENGTH_LONG).show();
+                } else if (!error.isEmpty()) {
+                    Toast.makeText(activity, Ui.tr("Couldn't save the background image."), Toast.LENGTH_LONG).show();
+                }
+                if (!error.isEmpty()) AppLog.w("theme image import: " + error);
+                invalidate();
+                spoken.focusMoved();
+            });
         }
 
         /** "auto", then English and every language with a catalogue. */
@@ -878,6 +1345,74 @@ public class SettingsActivity extends Activity {
             openPicker(which);
         }
 
+        private String pickerTitle() {
+            switch (pickFor) {
+                case PICK_NAME: return Ui.tr("Fixed name");
+                case PICK_NAME_INTERVAL:
+                case PICK_SAVER_INTERVAL: return Ui.tr("Change interval");
+                case PICK_SAVER_SOURCE: return Ui.tr("Image source");
+                case PICK_SAVER_IMAGE: return Ui.tr("Fixed image");
+                default: return Ui.tr("Appearance");
+            }
+        }
+
+        private void returnFromSettingsPicker(boolean selected) {
+            if (pickFor == PICK_NAME || pickFor == PICK_NAME_INTERVAL) {
+                screen = NAMES;
+                focus = pickFor == PICK_NAME ? 1 : 2;
+            } else if (pickFor == PICK_SAVER_SOURCE) {
+                screen = SCREENSAVER;
+                focus = 1;
+            } else if (pickFor == PICK_SAVER_IMAGE || pickFor == PICK_SAVER_INTERVAL) {
+                screen = SCREENSAVER;
+                focus = 3;
+            } else {
+                screen = THEME;
+                focus = 0;
+            }
+            pickScroll = 0;
+            if (selected) {
+                for (Spring spring : pop) spring.snap(0);
+            }
+            invalidate();
+            spoken.focusMoved();
+        }
+
+        private void pickSettingsChoice() {
+            String[] selected = choices.get(pickScroll + focus);
+            int which = pickFor;
+            if ((which == PICK_NAME_INTERVAL || which == PICK_SAVER_INTERVAL) && selected[0].equals("custom")) {
+                returnFromSettingsPicker(false);
+                askInterval(which == PICK_NAME_INTERVAL);
+                return;
+            }
+            switch (which) {
+                case PICK_NAME:
+                    Prefs.setFixedName(Integer.parseInt(selected[0]));
+                    break;
+                case PICK_NAME_INTERVAL:
+                    Prefs.setNameInterval(Integer.parseInt(selected[0]));
+                    break;
+                case PICK_SAVER_SOURCE:
+                    Prefs.setScreensaverSource(selected[0]);
+                    if (selected[0].equals("bing")) BingWallpapers.refresh(getContext(), false, () -> invalidate());
+                    break;
+                case PICK_SAVER_IMAGE:
+                    Prefs.setScreensaverImage(selected[0]);
+                    break;
+                case PICK_SAVER_INTERVAL:
+                    Prefs.setScreensaverInterval(Integer.parseInt(selected[0]));
+                    break;
+                case PICK_THEME_APPEARANCE:
+                    Prefs.setTheme(selected[0]);
+                    SleepOverlay.update(getContext());
+                    break;
+                default:
+                    throw new IllegalStateException("unknown settings picker: " + which);
+            }
+            returnFromSettingsPicker(true);
+        }
+
         /** OK in a Sleep Timer picker: applied, and back to its row. */
         private void pickPower() {
             Context c = getContext();
@@ -896,11 +1431,21 @@ public class SettingsActivity extends Activity {
         }
 
         private String[] listLabels() {
-            return screen == REMOTE_KEYS ? keyLabels() : screen == POWER ? powerLabels() : settingLabels();
+            if (screen == REMOTE_KEYS) return keyLabels();
+            if (screen == POWER) return powerLabels();
+            if (screen == NAMES) return nameLabels();
+            if (screen == SCREENSAVER) return saverLabels();
+            if (screen == THEME) return themeLabels();
+            return settingLabels();
         }
 
         private String[] listValues() {
-            return screen == REMOTE_KEYS ? keyValues() : screen == POWER ? powerValues() : settingValues();
+            if (screen == REMOTE_KEYS) return keyValues();
+            if (screen == POWER) return powerValues();
+            if (screen == NAMES) return nameValues();
+            if (screen == SCREENSAVER) return saverValues();
+            if (screen == THEME) return themeValues();
+            return settingValues();
         }
 
         private static String onOff(boolean on) {
@@ -955,6 +1500,18 @@ public class SettingsActivity extends Activity {
         /** Changes the focused row's value one step (OK and → go forward, ← goes back). */
         private void adjust(int dir) {
             if (unavailable(focus) != null) return;
+            if (screen == NAMES) {
+                adjustNames(dir);
+                return;
+            }
+            if (screen == SCREENSAVER) {
+                adjustScreensaver(dir);
+                return;
+            }
+            if (screen == THEME) {
+                adjustTheme(dir);
+                return;
+            }
             if (screen == POWER) {
                 int row = powerRow();
                 if (row == P_SLEEP) {
@@ -985,20 +1542,21 @@ public class SettingsActivity extends Activity {
                     Prefs.setTemperature(UNITS[(at + dir + UNITS.length) % UNITS.length]);
                     break;
                 }
-                case 2: {
+                case THEME_ROW: {
                     int at = java.util.Arrays.asList(THEMES).indexOf(Prefs.theme());
                     Prefs.setTheme(THEMES[(at + dir + THEMES.length) % THEMES.length]);
                     SleepOverlay.update(getContext());   // the pill's glass follows
                     break;
                 }
+                case NAMES_ROW: return;
                 case PHOTOS_ROW:
                     if (Photos.files(getContext()).isEmpty()) return;
                     Prefs.setPhotos(!Prefs.photos());
                     return;
-                case 4: Prefs.setSounds(!Prefs.sounds()); break;
-                case 5: Prefs.setWeather(!Prefs.weather()); break;
+                case 5: Prefs.setSounds(!Prefs.sounds()); break;
+                case 6: Prefs.setWeather(!Prefs.weather()); break;
                 case CITY_ROW: return;
-                case 7: Prefs.setQuotes(!Prefs.quotes()); break;
+                case 8: Prefs.setQuotes(!Prefs.quotes()); break;
                 default:
                     if (!Prefs.quotes()) return;
                     Prefs.setCoin(row - COIN_ROWS, !Prefs.coin(row - COIN_ROWS));
@@ -1077,11 +1635,15 @@ public class SettingsActivity extends Activity {
         }
 
         private boolean scrolling() {
-            return screen == PICKER || screen == SHELF_EDIT || screen == HOME_SETTINGS;
+            return screen == PICKER || screen == SHELF_EDIT || screen == HOME_SETTINGS || screen == NAMES || screen == SCREENSAVER;
         }
 
         private int listSize() {
-            return screen == SHELF_EDIT ? shelfRows.size() : screen == HOME_SETTINGS ? settingLabels().length : pickLabels.size();
+            if (screen == SHELF_EDIT) return shelfRows.size();
+            if (screen == HOME_SETTINGS) return settingLabels().length;
+            if (screen == NAMES) return nameLabels().length;
+            if (screen == SCREENSAVER) return saverLabels().length;
+            return pickLabels.size();
         }
 
         // MARK: - Shelf editor
@@ -1195,7 +1757,7 @@ public class SettingsActivity extends Activity {
                     pickLabels.add(code.equals("auto") ? Ui.tr("Automatic") : Ui.languageName(code));
                 }
                 pickCurrent = java.util.Arrays.asList(choices).indexOf(Prefs.language());
-            } else if (which <= PICK_SLEEP) {
+            } else if (which == PICK_SLEEP || which == PICK_PLACE || isSettingsPicker(which)) {
                 pickCurrent = -1;
                 for (int i = 0; i < choices.size(); i++) {
                     pickLabels.add(choices.get(i)[1]);
@@ -1218,7 +1780,7 @@ public class SettingsActivity extends Activity {
             String title = pickFor == PICK_CITY ? Ui.tr("City")
                     : pickFor == PICK_LANGUAGE ? Ui.tr("Language")
                     : pickFor == PICK_SLEEP ? Ui.tr("Sleep Timer") : pickFor == PICK_PLACE ? Ui.tr("Position")
-                    : keyLabels()[pickFor - 1];
+                    : isSettingsPicker(pickFor) ? pickerTitle() : keyLabels()[pickFor - 1];
             c.drawText(title, LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
             int rows = rowCount();
             for (int i = 0; i < rows; i++) {
@@ -1248,7 +1810,10 @@ public class SettingsActivity extends Activity {
             String[] labels = listLabels();
             String[] values = listValues();
             Paint heading = Ui.text(Ui.displaySemibold, 34 * k, 0xFFFFFFFF);
-            c.drawText(keys ? Ui.tr("Remote Buttons") : screen == POWER ? Ui.tr("Sleep Timer") : Ui.tr("Home Settings"),
+            String titleText = keys ? Ui.tr("Remote Buttons") : screen == POWER ? Ui.tr("Sleep Timer")
+                    : screen == NAMES ? Ui.tr("Names") : screen == SCREENSAVER ? Ui.tr("Screensaver")
+                    : screen == THEME ? Ui.tr("Theme") : Ui.tr("Home Settings");
+            c.drawText(titleText,
                     LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
             float pitch = LIST_ROW_H + LIST_ROW_GAP;
             int rows = keys ? labels.length : rowCount(), from = keys ? 0 : pickScroll;
@@ -1262,19 +1827,29 @@ public class SettingsActivity extends Activity {
                 rowValue.setColor(blend(locked ? 0x59FFFFFF : 0xB3FFFFFF, locked ? 0x591C1C1E : 0xB31C1C1E, f));
                 if (locked) rowLabel.setColor(blend(0x73FFFFFF, 0x731C1C1E, f));
                 float base = rowRect.centerY() + Ui.halfCap(rowLabel);
-                c.drawText(labels[from + i], rowRect.left + 30 * k, base, rowLabel);
-                c.drawText(values[from + i], rowRect.right - 30 * k, base, rowValue);
+                float labelX = rowRect.left + 30 * k, valueX = rowRect.right - 30 * k;
+                c.drawText(labels[from + i], labelX, base, rowLabel);
+                String value = values[from + i];
+                float valueWidth = Math.max(0, valueX - labelX - rowLabel.measureText(labels[from + i]) - 32 * k);
+                if (rowValue.measureText(value) > valueWidth) {
+                    value = TextUtils.ellipsize(value, valueFit, valueWidth, TextUtils.TruncateAt.END).toString();
+                }
+                c.drawText(value, valueX, base, rowValue);
             }
             Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             float hy = (LIST_TOP + 20 + rows * pitch + 36) * k;
             // A list longer than the screen says where we are in it, as the app picker does. Photos say where they come
             // from; on the Sleep Timer screen, the timer and Position open a list on OK.
             String where = rows < labels.length ? (from + focus + 1) + " / " + labels.length + "  ·  " : "";
-            c.drawText(where + (screen == HOME_SETTINGS && from + focus == PHOTOS_ROW ? (Photos.files(getContext()).isEmpty()
+            String hintText = screen == HOME_SETTINGS && from + focus == PHOTOS_ROW ? (Photos.files(getContext()).isEmpty()
                     ? Ui.tr("Send them from a computer: see “Your own photos” in the README.")
                     : Ui.tr("OK removes them; the arrows turn them on or off."))
                     : screen == POWER && powerRow() != P_SHOW && unavailable(focus) == null ? Ui.tr("OK opens the list. ← → change the value.")
-                    : Ui.tr("OK or the arrows change the value.")), LIST_X * k + 30 * k, hy, hint);
+                    : screen == NAMES ? Ui.tr("OK manages names or opens a choice; ← → changes values.")
+                    : screen == SCREENSAVER ? Ui.tr("OK opens settings; View now starts the screensaver.")
+                    : screen == THEME ? Ui.tr("OK opens image options; ← → changes appearance and opacity.")
+                    : Ui.tr("OK or the arrows change the value.");
+            c.drawText(where + hintText, LIST_X * k + 30 * k, hy, hint);
             if (keys) {
                 c.drawText(RemoteKeys.VESTEL ? Ui.tr("YouTube, Prime Video and Google Play: the TV itself controls those buttons.")
                         : RemoteKeys.KTC ? Ui.tr("Netflix, YouTube and Prime Video: the TV itself controls those buttons.")
@@ -1305,7 +1880,7 @@ public class SettingsActivity extends Activity {
                 focus = CITY_ROW;
                 pickScroll = 0;
                 screen = HOME_SETTINGS;
-            } else if (screen == PICKER && pickFor <= PICK_SLEEP) {
+            } else if (screen == PICKER && (pickFor == PICK_SLEEP || pickFor == PICK_PLACE)) {
                 pickPower();
             } else if (screen == PICKER && pickFor == PICK_LANGUAGE) {
                 Prefs.setLanguage(languageChoices()[pickScroll + focus]);
@@ -1313,6 +1888,8 @@ public class SettingsActivity extends Activity {
                 focus = 0;
                 pickScroll = 0;
                 screen = HOME_SETTINGS;
+            } else if (screen == PICKER && isSettingsPicker(pickFor)) {
+                pickSettingsChoice();
             } else if (screen == PICKER) {
                 int at = pickScroll + focus;
                 Prefs.setKeyApp(Prefs.KEYS[pickFor - 1], appPkgs.get(at));
@@ -1332,6 +1909,22 @@ public class SettingsActivity extends Activity {
             } else if (screen == HOME_SETTINGS && pickScroll + focus == PHOTOS_ROW) {
                 askRemovePhotos();
                 return;
+            } else if (screen == HOME_SETTINGS && pickScroll + focus == NAMES_ROW) {
+                screen = NAMES;
+                pickScroll = 0;
+                focus = 0;
+            } else if (screen == HOME_SETTINGS && pickScroll + focus == THEME_ROW) {
+                screen = THEME;
+                pickScroll = 0;
+                focus = 0;
+            } else if (screen == NAMES) {
+                activateNames();
+            } else if (screen == SCREENSAVER) {
+                activateScreensaver();
+                return;
+            } else if (screen == THEME) {
+                activateTheme();
+                return;
             } else if (screen == POWER) {
                 activatePower();
             } else if (screen == HOME_SETTINGS) {
@@ -1343,8 +1936,9 @@ public class SettingsActivity extends Activity {
                 screen = HOME_CHOICE;
                 focus = freeActive() ? 0 : 1;
             } else if (focus == 1) {
-                pause();
-                activity.showPreview();
+                screen = SCREENSAVER;
+                pickScroll = 0;
+                focus = 0;
             } else if (focus == 2) {
                 screen = HOME_SETTINGS;
                 focus = 0;
