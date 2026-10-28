@@ -19,8 +19,13 @@ import android.view.KeyEvent;
  * the filter sees them first, the same way.
  * On Xiaomi TVs whose remote has no Home button, its Mi button is BUTTON_4, a global key that Xiaomi's GlobalKeyReceiver
  * (partnercustomizer) turns into PatchWall. The filter sees it first, and by default it opens the home screen.
+ * On Xiaomi TVs the YouTube button is ours too: BUTTON_3, a global key for the stock home screen (launcherx), which
+ * Free My TV turns off. So is the PatchWall button (BUTTON_5, which that receiver would open PatchWall with); Netflix
+ * goes to the receiver, which stays on. Their remote sends one press as a burst of presses: the app opens once.
  * On Xiaomi TVs sold in Russia, the Okko, VK, Rutube, KION, Wink and IVI buttons are global keys too, for Xiaomi's
  * hot-key receiver (partnercustomizer's GlobalKeyReceiver).
+ * On Hisense TVs, the Prime Video, YouTube, Disney+, All Apps, Settings (gear) and profile buttons go to Google TV's
+ * home app, which Free My TV mode turns off: without the filter they do nothing. Netflix stays with the system.
  */
 final class RemoteKeys {
     private RemoteKeys() {}
@@ -32,7 +37,8 @@ final class RemoteKeys {
      * The key codes are the brand's own: on other brands they can be other buttons, so nothing here runs there.
      * Vestel builds TVs sold under other brands (F&U...), so BRAND varies: check the maker too.
      */
-    static final boolean TCL = is("TCL"), VESTEL = is("Vestel"), KTC = is("KTC"), SONY = is("Sony"), FORMOVIE = is("Formovie");
+    static final boolean TCL = is("TCL"), VESTEL = is("Vestel"), KTC = is("KTC"), SONY = is("Sony"), FORMOVIE = is("Formovie"),
+            HISENSE = is("Hisense");
     /**
      * Xiaomi TVs (models MiTV-M…; MiTV-MSSP3, MediaTek, Android TV 9 tested). Not the Mi Box or Mi TV Stick, the slowest
      * devices we run on, whose remotes have a Home button; Formovie's Xiaomi projectors have their own remote.
@@ -40,9 +46,26 @@ final class RemoteKeys {
     static final boolean XIAOMI = is("Xiaomi") && !FORMOVIE && Build.MODEL.startsWith("MiTV-M");
     /** Brands whose Netflix button is STEM_1, a global key (MediaTek): only that button is ours. */
     static final boolean STEM_NETFLIX = VESTEL || FORMOVIE;
+    /**
+     * With a key filter on, TCL's Android 11 changes the volume twice for one press, and a held key gets stuck (#325).
+     * There the service stays off: the buttons work on our home screen, whose window gets them (BUTTON_3 never does).
+     */
+    static final boolean FILTER_SAFE = !(TCL && Build.VERSION.SDK_INT == Build.VERSION_CODES.R);
+
+    /** Xiaomi's remote sends one press as a burst of separate presses: a press this soon after the last one is the same. */
+    private static final long BURST_MS = 1000;
+    private static int lastKey;
+    private static long lastDown;
 
     static boolean supported() {
-        return TCL || STEM_NETFLIX || KTC || SONY || XIAOMI;
+        return TCL || STEM_NETFLIX || KTC || SONY || XIAOMI || HISENSE;
+    }
+
+    /** The key service is on only where the filter is safe, and while a button opens something (else it has no work). */
+    static boolean serviceWanted() {
+        if (!supported() || !FILTER_SAFE) return false;
+        for (int key : Prefs.KEYS) if (!Prefs.keyApp(key).isEmpty()) return true;
+        return false;
     }
 
     private static boolean is(String maker) {
@@ -69,11 +92,17 @@ final class RemoteKeys {
         String pkg = Prefs.keyApp(keyCode);
         if (pkg.isEmpty()) return false;   // "Nothing": the key goes on as if we weren't here
         if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
+            // Only on Xiaomi, where the bursts are: everywhere else a second press opens the app again, as before.
+            boolean burst = XIAOMI && keyCode == lastKey && e.getEventTime() - lastDown < BURST_MS;
+            lastKey = keyCode;
+            lastDown = e.getEventTime();
+            if (burst) return true;
             // Our own package means the home screen in use (Xiaomi's Mi button): ours, or the TV's own after the
             // watchdog handed it back. Not the settings app our launcher icon opens.
-            Intent intent = pkg.equals(HomeMode.PKG)
+            Intent intent = pkg.equals(HomeMode.PKG) || pkg.equals(Prefs.ALL_APPS)
                     ? new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
                     : launchIntent(c.getPackageManager(), pkg);
+            if (pkg.equals(Prefs.ALL_APPS)) intent.putExtra(HomeActivity.EXTRA_ALL_APPS, true);
             AppLog.w("remote key " + e.getKeyCode() + " -> " + pkg + (intent == null ? " (not installed)" : ""));
             if (intent != null) c.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         }

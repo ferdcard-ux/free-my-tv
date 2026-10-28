@@ -362,9 +362,89 @@ Se solicitó publicar los cambios y el APK en `ferdcard-ux/free-my-tv`, no en el
 
 ---
 
+## 11. Integración de mejoras del repositorio original
+
+### Alcance
+
+- Se fusionó `origin/main` (repositorio `simbasjungles/free-my-tv`, commit `fa471834`) con el fork, conservando las funciones propias de este último.
+- Se integraron las mejoras recientes de Android, entre ellas recomendaciones por servicio, «Now Playing», páginas de actualización y compatibilidad adicional con televisores.
+- También se integraron cambios de documentación, catálogos, zonas horarias y paquetes webOS/Tizen.
+- En las resoluciones manuales se combinaron las opciones originales de recomendaciones, reproducción y actualizaciones con los nombres personalizables, las fuentes Bing/almacenamiento interno, los fondos de tema y las vistas previas de imágenes del fork.
+- El manifiesto queda en `1.4.0` (`versionCode=6`). Se conservaron las traducciones existentes y se completó el catálogo zh-TW con valores de origen en inglés para 68 cadenas del fork que faltaban en ese catálogo.
+
+### Verificación
+
+- `tools/check.sh`: compilación Android, comprobación de traducciones, paquetes genéricos webOS/Tizen y verificación ES5; resultado: `All checks passed`.
+- `python tools/translate.py --check`: resultado correcto con 371 cadenas.
+- Las pruebas funcionales de la app `1.4.0` se realizaron únicamente en `emulator-5554` (Android TV 14). La instalación posterior en la TV física, solicitada por el usuario, se registra abajo; no se hicieron pruebas funcionales allí.
+- Se verificaron en pantalla Ajustes de inicio, Recomendaciones, «Recomendaciones de» y Protector de pantalla. El emulador no tenía servicios de streaming instalados; la lista de proveedores mostró su estado vacío.
+- En Protector de pantalla se verificó la selección de TMDB, Bing y almacenamiento interno, el foco visible, el modo fijo/aleatorio, el intervalo de cinco minutos y la opción «Ver ahora». La interfaz informó 9 de 10 imágenes Bing disponibles.
+- Se abrió el flujo para añadir imágenes internas y se canceló en la solicitud de acceso; no se concedió permiso ni se seleccionaron fotos.
+- Tras las comprobaciones, se restauraron TMDB, el modo fijo y el intervalo diario. No se modificaron ajustes de la TV física.
+
+### Límites
+
+- No se seleccionó una imagen local ni se probó la presentación completa de una foto personal.
+- No se esperó el transcurso de un intervalo para comprobar una rotación automática, ni se probó la descarga con la red desconectada.
+- zh-TW incluye fallbacks en inglés para las 68 cadenas indicadas; no se consideran traducciones revisadas.
+- La fusión no se publicó en la etapa de pruebas. Su commit y push se registran al final de esta bitácora.
+- La publicación de `v1.4.0` requiere el keystore oficial de release. No está disponible en este equipo; no se publicará el APK local con la firma de desarrollo, porque `Updates` y Android lo rechazarían como actualización oficial.
+
+### Estado final del entorno
+
+- El emulador conserva la app `1.4.0`; la fuente TMDB, el modo fijo y el intervalo diario quedaron restaurados. No se concedió acceso a fotos.
+- La operación de merge permanece abierta para revisión y commit posterior. No se publicó ningún cambio ni APK.
+
+### Instalación solicitada en la TV física
+
+- El 2026-10-28, a petición del usuario, se instaló `FreeMyTV.apk` versión `1.4.0` (`versionCode=6`) en la Caixun Sgamer `5C857EF4F339-rfpAQ4`.
+- La versión anterior era `1.3` (`versionCode=4`). Se comprobó que la firma del APK nuevo coincide con la instalada; Android aceptó `adb install -r` y respondió `Success`. La hora de primera instalación no cambió, por lo que se actualizó sin desinstalar ni borrar los datos.
+- La TV ya estaba despierta. No se abrió Free My TV ni se cambió la aplicación que estaba en primer plano.
+- Esta acción fue solo la instalación solicitada; no se realizaron pruebas funcionales en la TV física. No hubo commit, push ni release.
+
+---
+
+## 12. Persistencia de la firma Android entre equipos
+
+### Problema
+
+- La compilación podía generar automáticamente un `freemytv.keystore` distinto cuando faltaba el archivo. En otro equipo, el APK resultante tendría otra firma y Android rechazaría la actualización sobre una instalación existente.
+- El keystore local está excluido de Git, por lo que un clon nuevo no recibe la clave privada (correctamente), pero tampoco podía saber que debía restaurar exactamente la misma llave.
+
+### Cambio
+
+- `build.sh` usa `FREEMYTV_KEYSTORE` si se define y, de lo contrario, busca `freemytv.keystore` en la raíz del proyecto. Si no encuentra la llave, ahora se detiene: nunca crea silenciosamente otra identidad.
+- La contraseña se solicita sin mostrarla en una compilación interactiva, o se recibe desde `FREEMYTV_KEYSTORE_PASS` en automatización. Se pueden especificar `FREEMYTV_KEY_PASS` y `FREEMYTV_KEY_ALIAS` cuando sean distintos del valor predeterminado.
+- `README.md` y `CLAUDE.md` documentan el respaldo cifrado y la transferencia privada del mismo archivo a cada equipo, el uso de una ubicación fuera del checkout y la rotación interactiva de la antigua contraseña de desarrollo que estuvo en un script anterior.
+- Se mantiene la separación entre la llave de desarrollo que permite actualizar instalaciones locales y la llave distinta usada por el APK oficial de release; ambas no pueden actualizarse entre sí.
+
+### Seguridad y límites
+
+- No se añadió ningún keystore, contraseña, archivo de secretos ni ruta privada al repositorio. `*.keystore` ya está excluido por `.gitignore`.
+- La garantía entre equipos depende de que quien compile restaure la copia privada exacta del keystore y use su contraseña; no se debe generar ni sustituir por otra llave. El respaldo debe mantenerse cifrado y privado.
+- La persona propietaria confirmó que cambió la contraseña de la copia externa antes de transferirla. La nueva contraseña no se comparte ni se registra. Las futuras rotaciones se harán interactivamente con `keytool -storepasswd` y `keytool -keypasswd`; el script de migración solo sirve para una llave que conserve la contraseña inicial antigua.
+- Se añadió `tools/change-signing-password.ps1`, que solicitó una nueva frase dos veces con entrada oculta y actualiza las contraseñas del almacén y de la entrada de clave privada, conservando el certificado. El script obtiene la contraseña heredada directamente del historial local de Git, no la imprime ni la pasa en argumentos de línea de comandos.
+
+### Paquete privado solicitado
+
+- Se creó `C:\Users\migue\FreeMyTV-signing`, fuera del checkout, con `freemytv.keystore`, `README.txt` y `SHA256.txt`.
+- Se limitaron los permisos de la carpeta a la cuenta actual de Windows, SYSTEM y Administradores. El SHA-256 del archivo copiado coincide con el keystore local; la huella pública del certificado también está en `SHA256.txt`.
+- El paquete no contiene contraseñas. El keystore externo se actualizó antes de transferirlo; la nueva contraseña se mantiene separada en un gestor de contraseñas.
+- El keystore sigue excluido de Git; solo se añadieron al repositorio instrucciones públicas sin contraseñas ni llave privada.
+
+### Cierre de documentación y validación
+
+- Se actualizaron `README.md`, `CLAUDE.md` y los documentos públicos de `docs/signing/` para explicar cómo usar y transferir el keystore de desarrollo sin publicar la llave ni la contraseña.
+- `tools/check.sh` volvió a pasar después de los cambios; también pasaron `git diff --check`, la validación sintáctica de `tools/change-signing-password.ps1` y una prueba de rotación con un keystore temporal.
+- Se confirmó que `freemytv.keystore` y `FreeMyTV.apk` siguen excluidos de Git y que no hay keystores incluidos entre los archivos rastreados.
+- No se crea todavía el release Android `v1.4.0`: el keystore de desarrollo no sustituye al certificado oficial fijado en `Updates.RELEASE_CERT`. Se publicará solo cuando esté disponible la llave oficial; no se debe cambiar el certificado esperado para facilitar una publicación.
+
+---
+
 ## Historial de Versiones
 
 | Fecha | Versión | Cambios |
 |---|---|---|
+| 2026-10-28 | 1.4.0 / Android 1.4.0 (versionCode 6) | Integración de las mejoras recientes de `simbasjungles/free-my-tv` en el fork, conservando sus funciones propias; validación en emulador Android TV. |
 | 2026-10-28 | 1.3.1 / Android 1.3.1 (versionCode 5) | Vista previa de fotos enfocadas en el navegador interno; publicación de APK genérico en el release `v1.3.1` del fork. |
 | 2026-10-26 | 1.3.0 / Android 1.3 (versionCode 4) | Nombres personalizables, fuentes TMDB/Bing/almacenamiento interno, fondos de tema con opacidad; pruebas en emulador y Caixun Sgamer y publicación del APK en el fork `ferdcard-ux/free-my-tv`. |

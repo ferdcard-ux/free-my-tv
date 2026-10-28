@@ -1,0 +1,4 @@
+Huella SHA-256 pública del certificado Android de desarrollo de Free My TV:
+dc1b5d4929869d72590e0ebc5ba9fb46de0ae144b57bb90164b240017a5dc734
+
+Este dato identifica el certificado; no es la llave privada ni una contraseña.
