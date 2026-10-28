@@ -387,20 +387,20 @@ Se solicitó publicar los cambios y el APK en `ferdcard-ux/free-my-tv`, no en el
 - No se seleccionó una imagen local ni se probó la presentación completa de una foto personal.
 - No se esperó el transcurso de un intervalo para comprobar una rotación automática, ni se probó la descarga con la red desconectada.
 - zh-TW incluye fallbacks en inglés para las 68 cadenas indicadas; no se consideran traducciones revisadas.
-- La fusión no se publicó en la etapa de pruebas. Su commit y push se registran al final de esta bitácora.
+- La fusión se publicó después de la etapa de pruebas; el commit y push se detallan en el cierre de esta bitácora.
 - La publicación de `v1.4.0` requiere el keystore oficial de release. No está disponible en este equipo; no se publicará el APK local con la firma de desarrollo, porque `Updates` y Android lo rechazarían como actualización oficial.
 
 ### Estado final del entorno
 
 - El emulador conserva la app `1.4.0`; la fuente TMDB, el modo fijo y el intervalo diario quedaron restaurados. No se concedió acceso a fotos.
-- La operación de merge permanece abierta para revisión y commit posterior. No se publicó ningún cambio ni APK.
+- La fusión quedó finalizada y publicada en `ferdcard-ux/free-my-tv`, rama `main`. No se creó todavía un release ni se publicó un APK de release.
 
 ### Instalación solicitada en la TV física
 
 - El 2026-10-28, a petición del usuario, se instaló `FreeMyTV.apk` versión `1.4.0` (`versionCode=6`) en la Caixun Sgamer `5C857EF4F339-rfpAQ4`.
 - La versión anterior era `1.3` (`versionCode=4`). Se comprobó que la firma del APK nuevo coincide con la instalada; Android aceptó `adb install -r` y respondió `Success`. La hora de primera instalación no cambió, por lo que se actualizó sin desinstalar ni borrar los datos.
 - La TV ya estaba despierta. No se abrió Free My TV ni se cambió la aplicación que estaba en primer plano.
-- Esta acción fue solo la instalación solicitada; no se realizaron pruebas funcionales en la TV física. No hubo commit, push ni release.
+- Esta acción fue solo la instalación solicitada; no se realizaron pruebas funcionales en la TV física. La integración posterior se publicó en GitHub según el cierre de esta bitácora.
 
 ---
 
@@ -438,6 +438,8 @@ Se solicitó publicar los cambios y el APK en `ferdcard-ux/free-my-tv`, no en el
 - `tools/check.sh` volvió a pasar después de los cambios; también pasaron `git diff --check`, la validación sintáctica de `tools/change-signing-password.ps1` y una prueba de rotación con un keystore temporal.
 - Se confirmó que `freemytv.keystore` y `FreeMyTV.apk` siguen excluidos de Git y que no hay keystores incluidos entre los archivos rastreados.
 - No se crea todavía el release Android `v1.4.0`: el keystore de desarrollo no sustituye al certificado oficial fijado en `Updates.RELEASE_CERT`. Se publicará solo cuando esté disponible la llave oficial; no se debe cambiar el certificado esperado para facilitar una publicación.
+- Commit de integración: `d21633b960d9094bb2be957e5733d1aa3e794632` (`Merge upstream Free My TV improvements`), sin trailer de coautoría.
+- Push verificado a `fork/main` (`ferdcard-ux/free-my-tv`). No se hizo push al repositorio padre. El worktree quedó limpio tras el commit.
 
 ---
 
