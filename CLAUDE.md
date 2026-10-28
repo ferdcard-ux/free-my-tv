@@ -272,6 +272,9 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
   process. The sleep timer's overlay (`SleepOverlay`) runs alone in `:sleep`, so its foreground service doesn't keep
   the home screen in memory under the app in front; the remote's key service lives in `:keys` (below).
   `Watchdog` goes back to the stock home screen after 3 crashes in 5 minutes.
+  `AppLog` keeps a bounded private diagnostics log; `DiagnosticsProvider` is read-only and allows only ADB shell/root
+  (`adb shell content query --uri content://io.freemytv.diagnostics/logs`). Redact credentials before writing logs;
+  never add an in-app share/export control.
   `Updates` (the release APK updating itself) runs there too: the week's check and Settings' OK are `ModeJob`s, one at
   a time, and they write `update.json`, which Settings only reads. The download must be this repository's release
   asset (its size and SHA-256 as GitHub lists them), newer than the app (versionName and versionCode) and signed with

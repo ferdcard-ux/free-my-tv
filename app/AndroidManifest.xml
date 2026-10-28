@@ -212,6 +212,12 @@
             android:authorities="io.freemytv.photos"
             android:exported="true" />
 
+        <!-- Read-only diagnostics; DiagnosticsProvider restricts queries to adb shell or root. -->
+        <provider
+            android:name=".DiagnosticsProvider"
+            android:authorities="io.freemytv.diagnostics"
+            android:exported="true" />
+
         <!-- The sleep timer's minutes left over any app, while the timer runs. A process of its own: a foreground
              service in :home would keep the whole home screen in memory under the app in front. -->
         <service

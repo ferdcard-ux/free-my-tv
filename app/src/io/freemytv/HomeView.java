@@ -243,7 +243,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     // Frames
     private boolean running, tilesDirty, statusDirty, heroDirty, drawerDirty, gridDirty, motionDirty = true;
-    private boolean drawerWasMoving, idle;
+    private boolean drawerWasMoving, idle, frameWasBusy;
     private long lastNanos, resumedAt, lastStep;
     private static final long BURST_MS = 1500;
     private int w, h;
@@ -706,6 +706,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     @Override public void doFrame(long frameTimeNanos) {
         if (!running) return;
+        if (frameWasBusy && lastNanos != 0) {
+            long gapMillis = (frameTimeNanos - lastNanos) / 1_000_000L;
+            if (gapMillis >= 150) AppLog.frameGap(gapMillis);
+        }
         float dt = lastNanos == 0 ? 1 / 60f : Math.min(0.05f, (frameTimeNanos - lastNanos) / 1e9f);
         lastNanos = frameTimeNanos;
         long up = SystemClock.uptimeMillis();
@@ -756,6 +760,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 || sheetMoving || toastFading || heroFading || bgFading || nightMoving || sheetOpen || sheet.value > 0.001f
                 || drawerOpen || drawer.value > 0.001f || toast != null || !toasts.isEmpty();
         idle = !busy;
+        frameWasBusy = busy;
         if (busy) Choreographer.getInstance().postFrameCallback(this);
         else Choreographer.getInstance().postFrameCallbackDelayed(this, 1000);
     }

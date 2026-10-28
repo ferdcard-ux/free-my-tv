@@ -223,6 +223,24 @@ On the TV: *Free My TV* → *Home Screen* → *Original*. The factory home scree
 
 To remove it for good, switch to *Original* first, then uninstall *Free My TV* (Settings → Apps). Uninstalled it while it was on? Install it again and pick *Original*: the list of what it turned off is kept in the TV's settings, so everything comes back.
 
+## Android diagnostics
+
+The Android app keeps a small, rotating diagnostics log in its private storage. It records app warnings and crashes,
+Android-reported ANRs or low-memory exits (Android 11+), long pauses on the home-screen thread, delayed remote input
+and slow rendered frames. API keys, access tokens and passwords are redacted. The log stays on the TV; the app has no
+screen or button for sharing it.
+
+With the TV connected over ADB, read the newest 1,000 records:
+
+```bash
+adb shell content query --uri content://io.freemytv.diagnostics/logs
+```
+
+The provider allows read-only queries from ADB's shell (or root), not from other apps. Add `?limit=5000` to request
+more rows, or `?since=<epoch-milliseconds>` to filter from a time; the returned `epoch_ms` column can be used for
+follow-up queries. The current and previous log files are each limited to 512 KB. On Android 8–10, where Android does
+not report historical process exits, the app still records main-thread pauses and crashes when it next runs.
+
 ## What it changes
 
 - It becomes the home screen and, unless `screensaver=false`, the screensaver.

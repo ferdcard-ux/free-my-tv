@@ -6,6 +6,8 @@ import android.app.Application;
 public class App extends Application {
     @Override public void onCreate() {
         super.onCreate();
+        AppLog.init(this);
+        AppLog.collectHistoricalExits(this);
         Prefs.init(this);
         Place.init(this);
     }

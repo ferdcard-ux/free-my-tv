@@ -5,9 +5,14 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.FrameMetrics;
 import android.view.KeyEvent;
+import android.view.Window;
 import android.widget.TextView;
 
 /**
@@ -20,6 +25,24 @@ public class HomeActivity extends Activity {
     static final String EXTRA_ALL_APPS = "io.freemytv.ALL_APPS";
     private HomeView home;
     private int prefsVersion = Prefs.version;   // settings changed while we were away: start over
+    private final Handler diagnosticsHandler = new Handler(Looper.getMainLooper());
+    private boolean heartbeatRunning, frameMetricsRegistered;
+    private long heartbeatAt;
+    private final Runnable heartbeat = new Runnable() {
+        @Override public void run() {
+            if (!heartbeatRunning) return;
+            long now = SystemClock.elapsedRealtime();
+            AppLog.mainThreadStall(now - heartbeatAt);
+            heartbeatAt = now;
+            diagnosticsHandler.postDelayed(this, 1000);
+        }
+    };
+    private final Window.OnFrameMetricsAvailableListener frameMetricsListener = (window, metrics, dropped) ->
+            AppLog.frameMetrics(
+                    metrics.getMetric(FrameMetrics.TOTAL_DURATION),
+                    metrics.getMetric(FrameMetrics.DRAW_DURATION),
+                    metrics.getMetric(FrameMetrics.SWAP_BUFFERS_DURATION),
+                    dropped);
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -58,10 +81,12 @@ public class HomeActivity extends Activity {
             return;
         }
         if (home != null) home.resume();
+        startDiagnostics();
         Updates.tellOnce(this);   // an update the week's check got ready: said once
     }
 
     @Override protected void onPause() {
+        stopDiagnostics();
         if (home != null) home.pause();
         super.onPause();
     }
@@ -75,6 +100,7 @@ public class HomeActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        stopDiagnostics();
         if (home != null) home.destroy();
         super.onDestroy();
     }
@@ -85,9 +111,31 @@ public class HomeActivity extends Activity {
     }
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+            AppLog.delayedInput(Math.max(0, SystemClock.uptimeMillis() - event.getEventTime()));
+        }
         if (RemoteKeys.onKey(this, event)) return true;
         if (home != null && home.onKey(event)) return true;
         return super.dispatchKeyEvent(event);
     }
 
+    private void startDiagnostics() {
+        heartbeatRunning = true;
+        heartbeatAt = SystemClock.elapsedRealtime();
+        diagnosticsHandler.removeCallbacks(heartbeat);
+        diagnosticsHandler.postDelayed(heartbeat, 1000);
+        if (!frameMetricsRegistered && Build.VERSION.SDK_INT >= 24) {
+            getWindow().addOnFrameMetricsAvailableListener(frameMetricsListener, diagnosticsHandler);
+            frameMetricsRegistered = true;
+        }
+    }
+
+    private void stopDiagnostics() {
+        heartbeatRunning = false;
+        diagnosticsHandler.removeCallbacks(heartbeat);
+        if (frameMetricsRegistered) {
+            getWindow().removeOnFrameMetricsAvailableListener(frameMetricsListener);
+            frameMetricsRegistered = false;
+        }
+    }
 }
