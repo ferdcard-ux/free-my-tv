@@ -388,12 +388,12 @@ Se solicitó publicar los cambios y el APK en `ferdcard-ux/free-my-tv`, no en el
 - No se esperó el transcurso de un intervalo para comprobar una rotación automática, ni se probó la descarga con la red desconectada.
 - zh-TW incluye fallbacks en inglés para las 68 cadenas indicadas; no se consideran traducciones revisadas.
 - La fusión se publicó después de la etapa de pruebas; el commit y push se detallan en el cierre de esta bitácora.
-- La publicación de `v1.4.0` requiere el keystore oficial de release. No está disponible en este equipo; no se publicará el APK local con la firma de desarrollo, porque `Updates` y Android lo rechazarían como actualización oficial.
+- El fork es independiente; el APK de release debe usar la firma persistente propia del fork, no la llave upstream. El APK personalizado de la compilación local no es publicable porque incluye datos de `config.properties`.
 
 ### Estado final del entorno
 
 - El emulador conserva la app `1.4.0`; la fuente TMDB, el modo fijo y el intervalo diario quedaron restaurados. No se concedió acceso a fotos.
-- La fusión quedó finalizada y publicada en `ferdcard-ux/free-my-tv`, rama `main`. No se creó todavía un release ni se publicó un APK de release.
+- La fusión quedó finalizada y publicada en `ferdcard-ux/free-my-tv`, rama `main`. El APK personalizado no se publica; se generará una compilación genérica para el release.
 
 ### Instalación solicitada en la TV física
 
@@ -416,7 +416,7 @@ Se solicitó publicar los cambios y el APK en `ferdcard-ux/free-my-tv`, no en el
 - `build.sh` usa `FREEMYTV_KEYSTORE` si se define y, de lo contrario, busca `freemytv.keystore` en la raíz del proyecto. Si no encuentra la llave, ahora se detiene: nunca crea silenciosamente otra identidad.
 - La contraseña se solicita sin mostrarla en una compilación interactiva, o se recibe desde `FREEMYTV_KEYSTORE_PASS` en automatización. Se pueden especificar `FREEMYTV_KEY_PASS` y `FREEMYTV_KEY_ALIAS` cuando sean distintos del valor predeterminado.
 - `README.md` y `CLAUDE.md` documentan el respaldo cifrado y la transferencia privada del mismo archivo a cada equipo, el uso de una ubicación fuera del checkout y la rotación interactiva de la antigua contraseña de desarrollo que estuvo en un script anterior.
-- Se mantiene la separación entre la llave de desarrollo que permite actualizar instalaciones locales y la llave distinta usada por el APK oficial de release; ambas no pueden actualizarse entre sí.
+- El fork usa el mismo keystore privado persistente para las compilaciones locales y sus releases. La llave del upstream es distinta; sus APK no se pueden instalar como actualización directa de los del fork.
 
 ### Seguridad y límites
 
@@ -434,10 +434,11 @@ Se solicitó publicar los cambios y el APK en `ferdcard-ux/free-my-tv`, no en el
 
 ### Cierre de documentación y validación
 
-- Se actualizaron `README.md`, `CLAUDE.md` y los documentos públicos de `docs/signing/` para explicar cómo usar y transferir el keystore de desarrollo sin publicar la llave ni la contraseña.
+- Se actualizaron `README.md`, `CLAUDE.md` y los documentos públicos de `docs/signing/` para explicar cómo usar y transferir el keystore privado del fork sin publicar la llave ni la contraseña.
 - `tools/check.sh` volvió a pasar después de los cambios; también pasaron `git diff --check`, la validación sintáctica de `tools/change-signing-password.ps1` y una prueba de rotación con un keystore temporal.
 - Se confirmó que `freemytv.keystore` y `FreeMyTV.apk` siguen excluidos de Git y que no hay keystores incluidos entre los archivos rastreados.
-- No se crea todavía el release Android `v1.4.0`: el keystore de desarrollo no sustituye al certificado oficial fijado en `Updates.RELEASE_CERT`. Se publicará solo cuando esté disponible la llave oficial; no se debe cambiar el certificado esperado para facilitar una publicación.
+- No se publicó el APK construido con `config.properties`: la inspección de su DEX descomprimido detectó valores configurados, entre ellos la clave TMDB y datos de ubicación. Se generó `FreeMyTV.apk` con `./build.sh --generic`; `Config.java` confirma que `GENERIC` es `true` y los campos TMDB y ubicación están vacíos.
+- El APK genérico verificado es `io.freemytv` 1.4.0 (`versionCode=6`), firmado con la huella SHA-256 del certificado del fork (`dc1b5d4929869d72590e0ebc5ba9fb46de0ae144b57bb90164b240017a5dc734`). La inspección de los DEX no encontró valores privados de `config.properties`.
 - Commit de integración: `d21633b960d9094bb2be957e5733d1aa3e794632` (`Merge upstream Free My TV improvements`), sin trailer de coautoría.
 - Push verificado a `fork/main` (`ferdcard-ux/free-my-tv`). No se hizo push al repositorio padre. El worktree quedó limpio tras el commit.
 

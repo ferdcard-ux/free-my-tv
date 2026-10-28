@@ -37,14 +37,14 @@ About ten minutes. You need a Google TV or Android TV (Android 8 or newer) and a
 
 1. **On the TV**, turn on developer mode: Settings → System → About → press *Android TV OS build* 7 times. Then Settings → System → Developer options → turn on **USB debugging**. Write down the TV's IP address (Settings → Network & Internet).
 2. **On your computer**, open an AI coding assistant ([Claude Code](https://claude.com/claude-code), Codex or Antigravity) and say:
-   > Install Free My TV (github.com/simbasjungles/free-my-tv) on my TV at 192.168.1.50. I live in Lisbon.
+   > Install Free My TV (github.com/ferdcard-ux/free-my-tv) on my TV at 192.168.1.50. I live in Lisbon.
 
    It downloads the code, installs the tools it needs, builds the app and puts it on your TV, and asks before anything important. Swap in your TV's IP and your city.
 3. **On the TV**, open *Free My TV* → *Home Screen* → *Free My TV*. That's when the TV asks *Allow USB debugging?* for Free My TV: tick *Always allow* and accept.
 
 ### The ready APK
 
-No tools to install besides adb. The APK on the [latest release](https://github.com/simbasjungles/free-my-tv/releases/latest) has no TMDB key: add yours on the TV for the picks (*Home Settings* → *TMDB key*, [below](#the-tmdb-key)). It takes your city from the TV's time zone (change it in *Home Settings* → *City*).
+No tools to install besides adb. The APK on the [latest fork release](https://github.com/ferdcard-ux/free-my-tv/releases/latest) has no TMDB key: add yours on the TV for the picks (*Home Settings* → *TMDB key*, [below](#the-tmdb-key)). It takes your city from the TV's time zone (change it in *Home Settings* → *City*).
 
 1. **On the TV**, do step 1 above.
 2. **On your computer**, download `FreeMyTV.apk` from the release and install it:
@@ -55,9 +55,9 @@ No tools to install besides adb. The APK on the [latest release](https://github.
    On Android 14, Google Play Protect may hold the install with *Risky app blocked*: choose *More details* → *Install anyway*.
 3. **On the TV**, do step 3 above.
 
-If you built Free My TV yourself before, switch back to *Original* and uninstall it first: your build and the release are signed with different keys. For the picks, add your TMDB key in *Home Settings* → *TMDB key* (below).
+This fork's release and local builds use the same private signing key. An APK from the original `simbasjungles/free-my-tv` project uses a different key and cannot update this fork; Android requires uninstalling the other app first, which removes its data. For the picks, add your TMDB key in *Home Settings* → *TMDB key* (below).
 
-**Updates come to the TV.** Once a week the APK from the release looks for a newer release and downloads it; the home screen then says so once, and *Home Settings* → *Updates* (the last row) installs it through Android's installer, which asks first (and, the first time, asks to allow Free My TV to install apps). OK on *Updates* also checks right away. The download must come from this repository's releases, match the size and SHA-256 GitHub lists, be newer, and be signed with the project's key. A build you made yourself checks only when you press *Updates*, and only says when a new version is out: build it again to update.
+**Updates from this fork:** download the newest APK from the [fork's releases](https://github.com/ferdcard-ux/free-my-tv/releases) and install it over the existing fork build. The current 1.4.0 app's built-in updater still checks the original project's releases, not this fork; install this release manually. Future releases can be installed the same way.
 
 ### The manual way
 
@@ -76,12 +76,13 @@ If you built Free My TV yourself before, switch back to *Original* and uninstall
    ```
    The first run creates `config.properties`. Set your city and your [TMDB key](#the-tmdb-key) there, then run it again.
    Android accepts an update only when it has the same signing key. Keep one private copy of `freemytv.keystore` for
-   every computer that builds updates; back it up and transfer it only through an encrypted password manager or
-   another secure channel, never through this repository. By default the build looks for that file in the repository
-   root; to keep it outside the checkout, set `FREEMYTV_KEYSTORE` to its path. The build prompts for its password
-   without echoing it. For automated builds, provide `FREEMYTV_KEYSTORE_PASS` as a secret environment variable.
-   Optionally set `FREEMYTV_KEY_PASS` and `FREEMYTV_KEY_ALIAS` when the key uses a separate key password or alias.
-   If the key is missing, the build stops instead of silently creating a different signing identity.
+   every computer that builds or publishes APKs for this fork; back it up and transfer it only through an encrypted
+   password manager or another secure channel, never through this repository. The fork's APKs and releases use this
+   key, so installs can update each other. By default the build looks for that file in the repository root; to keep it
+   outside the checkout, set `FREEMYTV_KEYSTORE` to its path. The build prompts for its password without echoing it.
+   For automated builds, provide `FREEMYTV_KEYSTORE_PASS` as a secret environment variable. Optionally set
+   `FREEMYTV_KEY_PASS` and `FREEMYTV_KEY_ALIAS` when the key uses a separate key password or alias. If the key is
+   missing, the build stops instead of silently creating a different signing identity.
    The existing development keystore's former password appeared in an earlier build script. Before transferring it,
    run `powershell -ExecutionPolicy Bypass -File tools/change-signing-password.ps1` from this checkout. It asks for a
    new passphrase twice without echoing it, updates both keystore and key passwords without changing the signing
@@ -172,9 +173,9 @@ The first values come from `config.properties`, created by the first build (Goog
 | `shelf_apps` | The shelf's apps in this order, by id or name (part of it), comma separated; changing it wins once over the shelf picked on the TV. On Samsung, a whole app id also brings an app the TV leaves out of its list, like one installed in Developer Mode. LG and Samsung only | empty |
 | `drawer_first` | `true` opens the home screen with the drawer already out (apps in the middle, inputs, weather and prices below), so nothing has to be scrolled to reach the inputs; Back closes it to the full page. For a TV whose streaming apps live on a box, where the picks stay empty. LG and Samsung only | `false` |
 
-Changed something? Run `./build.sh` and install again. Use the same `freemytv.keystore` on every computer: updates
-are signed with it. The published release uses a separate project key, so a locally built APK and the release APK
-cannot update one another.
+Changed something? Run `./build.sh` and install again. Use the same `freemytv.keystore` on every computer and for
+fork releases: updates are signed with it. The original upstream project's releases use a different key and cannot
+update this fork's APKs.
 
 ### The TMDB key
 

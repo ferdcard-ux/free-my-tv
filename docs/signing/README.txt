@@ -27,8 +27,9 @@ Para compilar desde otro equipo:
 3. Ejecuta ./build.sh. Ingresa la contraseña nueva cuando se solicite.
 4. Comprueba el APK con apksigner verify --print-certs FreeMyTV.apk y compara la huella SHA-256 con SHA256.txt.
 
-Usa siempre exactamente el mismo keystore para los APK locales. Si se pierde, Android no aceptará una llave nueva
-como actualización. El APK oficial de GitHub usa una llave diferente y no se puede actualizar con este keystore.
+Usa siempre exactamente el mismo keystore para los APK locales y los releases de este fork. Si se pierde, Android no
+aceptará una llave nueva como actualización. El APK del repositorio upstream `simbasjungles/free-my-tv` usa otra
+llave y no se puede actualizar con este keystore.
 
 Transfiere el keystore solo mediante un gestor de contraseñas con adjuntos cifrados u otro canal cifrado y privado.
 No lo subas a GitHub, correo sin cifrar, almacenamiento compartido ni servicios públicos.
