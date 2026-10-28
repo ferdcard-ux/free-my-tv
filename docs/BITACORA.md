@@ -441,6 +441,8 @@ Se solicitó publicar los cambios y el APK en `ferdcard-ux/free-my-tv`, no en el
 - El APK genérico verificado es `io.freemytv` 1.4.0 (`versionCode=6`), firmado con la huella SHA-256 del certificado del fork (`dc1b5d4929869d72590e0ebc5ba9fb46de0ae144b57bb90164b240017a5dc734`). La inspección de los DEX no encontró valores privados de `config.properties`.
 - Commit de integración: `d21633b960d9094bb2be957e5733d1aa3e794632` (`Merge upstream Free My TV improvements`), sin trailer de coautoría.
 - Push verificado a `fork/main` (`ferdcard-ux/free-my-tv`). No se hizo push al repositorio padre. El worktree quedó limpio tras el commit.
+- Se publicó [el release Android `v1.4.0`](https://github.com/ferdcard-ux/free-my-tv/releases/tag/v1.4.0), adjuntando únicamente `FreeMyTV.apk` (1.504.294 bytes). Su SHA-256 es `d508295c40d129b8d2a281c4483f9fa48816a001712e595b41c44ce8c0867174`.
+- El tag `v1.4.0` apunta a `a4221b39b2094e4dc734aca9401330405664b157`; la rama remota `fork/main` quedó en ese mismo commit. El repositorio upstream no se modificó.
 
 ---
 
