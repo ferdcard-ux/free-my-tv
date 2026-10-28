@@ -1,26 +1,35 @@
 package io.freemytv;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ComponentName;
+import android.content.ContentUris;
 import android.content.Context;
 import android.content.Intent;
+import android.database.Cursor;
 import android.net.Uri;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.provider.MediaStore;
 import android.provider.Settings;
 import android.text.StaticLayout;
 import android.text.TextPaint;
 import android.text.TextUtils;
+import android.util.Size;
 import android.view.Choreographer;
 import android.view.KeyEvent;
 import android.view.View;
@@ -35,10 +44,18 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.io.File;
+import java.io.IOException;
+import java.io.InterruptedIOException;
+import java.io.InputStream;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * Free My TV's settings (the app's icon, "All Apps", or the gear on the home screen), in the style of Apple TV's
@@ -48,6 +65,7 @@ import java.util.Set;
  */
 public class SettingsActivity extends Activity {
     private static final int PICK_SCREENSAVER_IMAGES = 71, PICK_THEME_IMAGE = 72;
+    private static final int REQUEST_IMAGE_ACCESS = 73;
     private SettingsView view;
     private DreamView preview;   // "Screensaver": the screensaver right here, without changing the system setting
 
@@ -80,6 +98,7 @@ public class SettingsActivity extends Activity {
         super.onResume();
         if (view == null) return;
         view.resume();
+        view.imagePickerResumed();
         // From ADB: am start -n io.freemytv/.SettingsActivity --ez screensaver true (straight to the preview).
         if (preview == null && getIntent().getBooleanExtra("screensaver", false)) {
             getIntent().removeExtra("screensaver");
@@ -102,7 +121,10 @@ public class SettingsActivity extends Activity {
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (view == null || resultCode != RESULT_OK) return;
+        if (view == null) return;
+        boolean imagePicker = requestCode == PICK_SCREENSAVER_IMAGES || requestCode == PICK_THEME_IMAGE;
+        if (imagePicker) view.finishImageBrowser();
+        if (!imagePicker || resultCode != RESULT_OK) return;
         if (requestCode == PICK_SCREENSAVER_IMAGES) {
             view.importScreensaverImages(WallpaperImages.selectedUris(data));
         } else if (requestCode == PICK_THEME_IMAGE) {
@@ -112,11 +134,47 @@ public class SettingsActivity extends Activity {
     }
 
     private void pickImages(boolean theme) {
+        view.openImageBrowser(theme);
+    }
+
+    private void pickSystemImages(boolean theme) {
         Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("image/*");
         if (!theme) intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         startActivityForResult(intent, theme ? PICK_THEME_IMAGE : PICK_SCREENSAVER_IMAGES);
+    }
+
+    private boolean hasImageAccess() {
+        if (Build.VERSION.SDK_INT >= 34) {
+            return checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED
+                    || checkSelfPermission(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED;
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            return checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED;
+        }
+        return checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void requestImageAccess() {
+        if (Build.VERSION.SDK_INT >= 34) {
+            requestPermissions(new String[] {Manifest.permission.READ_MEDIA_IMAGES,
+                    Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED}, REQUEST_IMAGE_ACCESS);
+        } else if (Build.VERSION.SDK_INT >= 33) {
+            requestPermissions(new String[] {Manifest.permission.READ_MEDIA_IMAGES}, REQUEST_IMAGE_ACCESS);
+        } else {
+            requestPermissions(new String[] {Manifest.permission.READ_EXTERNAL_STORAGE}, REQUEST_IMAGE_ACCESS);
+        }
+    }
+
+    private void openAppSettings() {
+        startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:" + getPackageName())));
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_IMAGE_ACCESS && view != null) view.imagePermissionResult();
     }
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
@@ -156,9 +214,28 @@ public class SettingsActivity extends Activity {
 
     static final class SettingsView extends View implements Choreographer.FrameCallback {
         private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5,
-                POWER = 6, NAMES = 7, SCREENSAVER = 8, THEME = 9;
+                POWER = 6, NAMES = 7, SCREENSAVER = 8, THEME = 9, IMAGE_BROWSER = 10;
         private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
         private static final int PICK_VISIBLE = 9;
+        private static final ExecutorService imageWorker = Executors.newSingleThreadExecutor();
+        private static final ExecutorService imagePreviewWorker = Executors.newSingleThreadExecutor();
+        private static final int IMAGE_CANCEL = 0, IMAGE_GRANT = 1, IMAGE_SYSTEM = 2, IMAGE_SETTINGS = 3,
+                IMAGE_PARENT = 4, IMAGE_FOLDER = 5, IMAGE_FILE = 6, IMAGE_USE = 7, IMAGE_LOADING = 8,
+                IMAGE_EMPTY = 9, IMAGE_RETRY = 10;
+
+        private static final class ImageBrowserRow {
+            final int kind;
+            final String label, value, path;
+            final Uri uri;
+
+            ImageBrowserRow(int kind, String label, String value, String path, Uri uri) {
+                this.kind = kind;
+                this.label = label;
+                this.value = value;
+                this.path = path;
+                this.uri = uri;
+            }
+        }
         private static final float LIST_X = 1000, LIST_R = 1824, LIST_TOP = 186, ROW_GAP = 8, CHOICE_H = 104;
         // The main menu: eight rows, then the comparison, the picks (with the Watchmode credit) and two notices, all on
         // one 1080 px screen: the rows share the 462 px that seven took.
@@ -176,6 +253,19 @@ public class SettingsActivity extends Activity {
         // order) and the selection.
         private final List<String[]> shelfRows = new ArrayList<>();
         private final List<String> shelfOrder = new ArrayList<>();
+        private final List<ImageBrowserRow> imageRows = new ArrayList<>();
+        private final List<ImageBrowserRow> availableImages = new ArrayList<>();
+        private final LinkedHashSet<Uri> selectedImages = new LinkedHashSet<>();
+        private final Rect imagePreviewSource = new Rect();
+        private final RectF imagePreviewRect = new RectF();
+        private Bitmap imagePreviewBitmap;
+        private Uri imagePreviewUri, imagePreviewRequestedUri;
+        private boolean imagePreviewLoading;
+        private String imagePreviewError = "", imagePreviewLabel = "", imagePreviewLabelSource = "";
+        private int imagePreviewRequest;
+        private Future<?> imagePreviewJob;
+        private Paint imagePreviewPaint, imagePreviewFrame;
+        private TextPaint imagePreviewTitle, imagePreviewCaption;
         private boolean editingTop;
         private int pickFor, pickCurrent, pickScroll;   // pickFor: the remote button (index + 1)
         private static final int PICK_CITY = 0, PICK_LANGUAGE = -1, PICK_SLEEP = -2, PICK_PLACE = -3,
@@ -184,12 +274,16 @@ public class SettingsActivity extends Activity {
         /** Sleep Timer's pickers (PICK_SLEEP and below): their choices as {value, name}, and the value now. */
         private final List<String[]> choices = new ArrayList<>();
         private String choiceNow = "";
+        private String imageDirectory = "", imageError = "";
+        private String[] imageLabels = new String[0], imageValues = new String[0];
         private final List<String[]> cities = new ArrayList<>();
         private String cityStatus = "";
         private final RectF tmp = new RectF(), rowRect = new RectF(), focusBox = new RectF();
         private JSONObject state = new JSONObject(), recs = new JSONObject();
         private boolean hasKey;
         private int screen = MAIN, focus;
+        private int imageReturnScreen, imageReturnFocus, imageReturnScroll, imageRequest;
+        private boolean imageTheme, imageLoading, imagePermissionDenied, imageAccessGranted;
         private boolean running, okDown, backDown, wasBusy;
         private StaticLayout errorLayout;   // the last error, wrapped (rebuilt only when it changes)
         private Toast whyToast;   // why the focused option is unavailable
@@ -199,11 +293,11 @@ public class SettingsActivity extends Activity {
         private int whyState = -1;
         private String errorShown;
         private final Spoken spoken;
-        private final TextPaint valueFit = new TextPaint();
         private long startedAt, lastNanos, pendingAt, lastSky;
         private int w, h;
         private float k = 1;
         private Paint title, subtitle, version, rowLabel, rowValue, rowSub, header, cellLabel, cellValue, warn, spinner, white, shadow;
+        private final TextPaint labelFit = new TextPaint(), valueFit = new TextPaint();
         private TextPaint notice;
 
         private final Runnable poll = new Runnable() {
@@ -251,6 +345,13 @@ public class SettingsActivity extends Activity {
                     return true;
                 }
                 @Override public int focused() { return focus + 1; }
+                @Override public boolean clickable(int id) {
+                    if (screen != IMAGE_BROWSER) return true;
+                    int at = pickScroll + id - 1;
+                    if (at < 0 || at >= imageRows.size()) return false;
+                    int kind = imageRows.get(at).kind;
+                    return kind != IMAGE_LOADING && kind != IMAGE_EMPTY;
+                }
                 @Override public void focus(int id) {
                     focus = id - 1;
                     invalidate();
@@ -309,6 +410,12 @@ public class SettingsActivity extends Activity {
                     if (at >= pickLabels.size()) return "";
                     return pickLabels.get(at) + (at == pickCurrent ? Ui.tr(", selected") : "")
                             + ", " + Ui.trf("{i} of {n}", "i", at + 1, "n", pickLabels.size());
+                }
+                case IMAGE_BROWSER: {
+                    int at = pickScroll + row;
+                    if (at >= imageRows.size()) return "";
+                    ImageBrowserRow item = imageRows.get(at);
+                    return item.value.isEmpty() ? item.label : item.label + ", " + item.value;
                 }
                 case SHELF_EDIT: {
                     int at = pickScroll + row;
@@ -384,9 +491,20 @@ public class SettingsActivity extends Activity {
             version = Ui.text(Ui.regular, 22 * k, 0x66FFFFFF);
             version.setTextAlign(Paint.Align.CENTER);
             rowLabel = Ui.text(Ui.medium, 30 * k, 0xF2FFFFFF);
+            labelFit.set(rowLabel);
             rowValue = Ui.text(Ui.regular, 28 * k, 0x8CFFFFFF);
             rowValue.setTextAlign(Paint.Align.RIGHT);
             valueFit.set(rowValue);
+            imagePreviewPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+            imagePreviewFrame = new Paint(Paint.ANTI_ALIAS_FLAG);
+            imagePreviewFrame.setStyle(Paint.Style.STROKE);
+            imagePreviewFrame.setStrokeWidth(2 * k);
+            imagePreviewFrame.setColor(0x66FFFFFF);
+            imagePreviewTitle = new TextPaint(Ui.text(Ui.displaySemibold, 34 * k, 0xFFFFFFFF));
+            imagePreviewTitle.setTextAlign(Paint.Align.CENTER);
+            imagePreviewLabelSource = "";
+            imagePreviewCaption = new TextPaint(Ui.text(Ui.regular, 23 * k, 0x99FFFFFF));
+            imagePreviewCaption.setTextAlign(Paint.Align.CENTER);
             rowSub = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             header = Ui.text(Ui.semibold, 21 * k, 0x73FFFFFF);
             header.setLetterSpacing(0.06f);
@@ -430,6 +548,7 @@ public class SettingsActivity extends Activity {
                 case NAMES: return Math.min(SETTINGS_VISIBLE, nameLabels().length);
                 case SCREENSAVER: return saverLabels().length;
                 case THEME: return themeLabels().length;
+                case IMAGE_BROWSER: return Math.min(PICK_VISIBLE, imageRows.size());
                 default: return Prefs.KEYS.length;
             }
         }
@@ -451,15 +570,175 @@ public class SettingsActivity extends Activity {
             }
             scene.drawBackground(c);
 
-            // On the left: big symbol, title, description.
+            if (screen == IMAGE_BROWSER) {
+                drawImagePreview(c);
+            } else {
+                drawSettingsBrand(c);
+            }
+            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c);
+            else drawList(c);
+        }
+
+        private void drawSettingsBrand(Canvas c) {
             float cx = 500 * k;
             Symbols.draw(getContext(), c, "sparkles", cx, 400 * k, 150 * k, 0xEBFFFFFF);
             c.drawText("Free My TV", cx, 612 * k, title);
             c.drawText(Ui.tr("Your TV's home screen and screensaver"), cx, 660 * k, subtitle);
             c.drawText(versionName(getContext()), cx, 704 * k, version);
+        }
 
-            if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c);
-            else drawList(c);
+        private void drawImagePreview(Canvas c) {
+            ImageBrowserRow row = focusedImageRow();
+            if (row == null) {
+                requestImagePreview(null);
+                drawSettingsBrand(c);
+                return;
+            }
+            requestImagePreview(row.uri);
+            if (imagePreviewBitmap == null || !row.uri.equals(imagePreviewUri)) {
+                float cx = 500 * k;
+                Symbols.draw(getContext(), c, "sparkles", cx, 400 * k, 150 * k, 0xEBFFFFFF);
+                c.drawText("Free My TV", cx, 612 * k, title);
+                c.drawText(imagePreviewLoading ? Ui.tr("Loading images…")
+                        : imagePreviewError.isEmpty() ? "" : imagePreviewError, cx, 660 * k, subtitle);
+                c.drawText(versionName(getContext()), cx, 704 * k, version);
+                return;
+            }
+
+            imagePreviewRect.set(110 * k, 142 * k, 890 * k, 580 * k);
+            float targetRatio = imagePreviewRect.width() / imagePreviewRect.height();
+            float bitmapRatio = (float) imagePreviewBitmap.getWidth() / imagePreviewBitmap.getHeight();
+            if (bitmapRatio > targetRatio) {
+                int width = Math.round(imagePreviewBitmap.getHeight() * targetRatio);
+                int left = (imagePreviewBitmap.getWidth() - width) / 2;
+                imagePreviewSource.set(left, 0, left + width, imagePreviewBitmap.getHeight());
+            } else {
+                int height = Math.round(imagePreviewBitmap.getWidth() / targetRatio);
+                int top = (imagePreviewBitmap.getHeight() - height) / 2;
+                imagePreviewSource.set(0, top, imagePreviewBitmap.getWidth(), top + height);
+            }
+            c.drawBitmap(imagePreviewBitmap, imagePreviewSource, imagePreviewRect, imagePreviewPaint);
+            c.drawRoundRect(imagePreviewRect, 12 * k, 12 * k, imagePreviewFrame);
+
+            float cx = 500 * k;
+            if (!row.label.equals(imagePreviewLabelSource)) {
+                imagePreviewLabelSource = row.label;
+                imagePreviewLabel = TextUtils.ellipsize(row.label, imagePreviewTitle, 780 * k,
+                        TextUtils.TruncateAt.END).toString();
+            }
+            c.drawText(imagePreviewLabel, cx, 634 * k, imagePreviewTitle);
+            c.drawText(selectedImages.contains(row.uri) ? Ui.tr("Selected") : "", cx, 674 * k, imagePreviewCaption);
+        }
+
+        private ImageBrowserRow focusedImageRow() {
+            int at = pickScroll + focus;
+            if (screen != IMAGE_BROWSER || at < 0 || at >= imageRows.size()) return null;
+            ImageBrowserRow row = imageRows.get(at);
+            return row.kind == IMAGE_FILE ? row : null;
+        }
+
+        private void requestImagePreview(Uri uri) {
+            if (uri == null) {
+                if (imagePreviewRequestedUri != null) clearImagePreview();
+                return;
+            }
+            if (uri.equals(imagePreviewRequestedUri)) return;
+            if (imagePreviewJob != null) imagePreviewJob.cancel(true);
+            imagePreviewRequest++;
+            int request = imagePreviewRequest;
+            imagePreviewRequestedUri = uri;
+            imagePreviewUri = null;
+            imagePreviewLoading = true;
+            imagePreviewError = "";
+            if (imagePreviewBitmap != null) {
+                imagePreviewBitmap.recycle();
+                imagePreviewBitmap = null;
+            }
+            Context app = getContext().getApplicationContext();
+            imagePreviewJob = imagePreviewWorker.submit(() -> {
+                Bitmap loaded = null;
+                String error = "";
+                try {
+                    loaded = decodeImagePreview(app, uri);
+                } catch (InterruptedIOException e) {
+                    return;
+                } catch (IOException | RuntimeException | OutOfMemoryError e) {
+                    error = Ui.tr("Couldn't read photos from storage.");
+                    AppLog.w("image browser: couldn't preview image: " + e.getMessage());
+                }
+                Bitmap result = loaded;
+                String message = error;
+                handler.post(() -> {
+                    if (request != imagePreviewRequest || screen != IMAGE_BROWSER
+                            || !uri.equals(imagePreviewRequestedUri)) {
+                        if (result != null && !result.isRecycled()) result.recycle();
+                        return;
+                    }
+                    imagePreviewJob = null;
+                    imagePreviewLoading = false;
+                    imagePreviewError = message;
+                    imagePreviewBitmap = result;
+                    imagePreviewUri = result == null ? null : uri;
+                    invalidate();
+                });
+            });
+        }
+
+        private void clearImagePreview() {
+            imagePreviewRequest++;
+            if (imagePreviewJob != null) {
+                imagePreviewJob.cancel(true);
+                imagePreviewJob = null;
+            }
+            imagePreviewRequestedUri = null;
+            imagePreviewUri = null;
+            imagePreviewLoading = false;
+            imagePreviewError = "";
+            imagePreviewLabel = "";
+            imagePreviewLabelSource = "";
+            if (imagePreviewBitmap != null) {
+                imagePreviewBitmap.recycle();
+                imagePreviewBitmap = null;
+            }
+        }
+
+        private static Bitmap decodeImagePreview(Context context, Uri uri) throws IOException {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                try {
+                    Bitmap thumbnail = context.getContentResolver().loadThumbnail(uri, new Size(960, 540), null);
+                    if (thumbnail != null) return thumbnail;
+                } catch (IOException | RuntimeException e) {
+                    AppLog.w("image browser: thumbnail request failed: " + e.getMessage());
+                }
+            }
+            ensurePreviewActive();
+
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            try (InputStream input = context.getContentResolver().openInputStream(uri)) {
+                if (input == null) throw new IOException("image stream unavailable");
+                BitmapFactory.decodeStream(input, null, bounds);
+            }
+            ensurePreviewActive();
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw new IOException("image dimensions unavailable");
+
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            long pixels = (long) bounds.outWidth * bounds.outHeight;
+            while (pixels / ((long) options.inSampleSize * options.inSampleSize) > 960L * 540L
+                    || bounds.outWidth / options.inSampleSize > 960 || bounds.outHeight / options.inSampleSize > 540) {
+                options.inSampleSize *= 2;
+            }
+            ensurePreviewActive();
+            try (InputStream input = context.getContentResolver().openInputStream(uri)) {
+                if (input == null) throw new IOException("image stream unavailable");
+                Bitmap bitmap = BitmapFactory.decodeStream(input, null, options);
+                if (bitmap == null) throw new IOException("image decode failed");
+                return bitmap;
+            }
+        }
+
+        private static void ensurePreviewActive() throws InterruptedIOException {
+            if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("image preview cancelled");
         }
 
         private void drawMain(Canvas c, float seconds) {
@@ -705,7 +984,9 @@ public class SettingsActivity extends Activity {
                         if (e.getRepeatCount() == 0) backDown = true;
                     } else {
                         if (backDown && !e.isCanceled()) {
-                            if (screen == PICKER && (pickFor == PICK_SLEEP || pickFor == PICK_PLACE)) {
+                            if (screen == IMAGE_BROWSER) {
+                                backImageBrowser();
+                            } else if (screen == PICKER && (pickFor == PICK_SLEEP || pickFor == PICK_PLACE)) {
                                 focus = powerFocus(pickFor == PICK_SLEEP ? P_SLEEP : P_WHERE);
                                 pickScroll = 0;   // the picker's scroll isn't this short list's
                                 screen = POWER;
@@ -1168,6 +1449,310 @@ public class SettingsActivity extends Activity {
             }
         }
 
+        private void openImageBrowser(boolean theme) {
+            clearImagePreview();
+            imageReturnScreen = screen;
+            imageReturnFocus = focus;
+            imageReturnScroll = pickScroll;
+            imageTheme = theme;
+            imageDirectory = "";
+            imageError = "";
+            imageAccessGranted = activity.hasImageAccess();
+            if (imageAccessGranted) imagePermissionDenied = false;
+            imageLoading = false;
+            imageRequest++;
+            availableImages.clear();
+            selectedImages.clear();
+            pickScroll = 0;
+            focus = 0;
+            screen = IMAGE_BROWSER;
+            if (imageAccessGranted) loadImageFolder();
+            else rebuildImageRows();
+            invalidate();
+            spoken.focusMoved();
+        }
+
+        void imagePickerResumed() {
+            if (screen != IMAGE_BROWSER) return;
+            boolean granted = activity.hasImageAccess();
+            if (granted && !imageAccessGranted) {
+                imageAccessGranted = true;
+                imagePermissionDenied = false;
+                loadImageFolder();
+            } else if (!granted) {
+                imageAccessGranted = false;
+            }
+        }
+
+        void imagePermissionResult() {
+            if (screen != IMAGE_BROWSER) return;
+            imageAccessGranted = activity.hasImageAccess();
+            imagePermissionDenied = !imageAccessGranted;
+            if (imageAccessGranted) loadImageFolder();
+            else {
+                rebuildImageRows();
+                invalidate();
+                spoken.focusMoved();
+            }
+        }
+
+        void finishImageBrowser() {
+            if (screen != IMAGE_BROWSER) return;
+            clearImagePreview();
+            imageRequest++;
+            screen = imageReturnScreen;
+            focus = imageReturnFocus;
+            pickScroll = imageReturnScroll;
+            imageDirectory = "";
+            imageError = "";
+            imageLoading = false;
+            imageAccessGranted = false;
+            availableImages.clear();
+            imageRows.clear();
+            imageLabels = new String[0];
+            imageValues = new String[0];
+            selectedImages.clear();
+            for (Spring spring : pop) spring.snap(0);
+            invalidate();
+            spoken.focusMoved();
+        }
+
+        private void backImageBrowser() {
+            if (!imageDirectory.isEmpty()) {
+                imageDirectory = parentDirectory(imageDirectory);
+                pickScroll = 0;
+                focus = imagePrefixRows();
+                loadImageFolder();
+            } else {
+                finishImageBrowser();
+            }
+        }
+
+        private void activateImageBrowser() {
+            int at = pickScroll + focus;
+            if (at < 0 || at >= imageRows.size()) return;
+            ImageBrowserRow row = imageRows.get(at);
+            switch (row.kind) {
+                case IMAGE_CANCEL:
+                    finishImageBrowser();
+                    return;
+                case IMAGE_GRANT:
+                    activity.requestImageAccess();
+                    return;
+                case IMAGE_SETTINGS:
+                    activity.openAppSettings();
+                    return;
+                case IMAGE_SYSTEM:
+                    activity.pickSystemImages(imageTheme);
+                    return;
+                case IMAGE_PARENT:
+                    imageDirectory = row.path;
+                    pickScroll = 0;
+                    focus = imagePrefixRows();
+                    loadImageFolder();
+                    return;
+                case IMAGE_FOLDER:
+                    imageDirectory = row.path;
+                    pickScroll = 0;
+                    focus = imagePrefixRows();
+                    loadImageFolder();
+                    return;
+                case IMAGE_FILE:
+                    if (imageTheme) {
+                        Uri selected = row.uri;
+                        finishImageBrowser();
+                        importThemeImage(selected);
+                    } else {
+                        if (!selectedImages.add(row.uri)) selectedImages.remove(row.uri);
+                        rebuildImageRows();
+                        invalidate();
+                        spoken.focusMoved();
+                    }
+                    return;
+                case IMAGE_USE: {
+                    if (selectedImages.isEmpty()) {
+                        Toast.makeText(activity, Ui.tr("Select at least one image."), Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    List<Uri> selected = new ArrayList<>(selectedImages);
+                    finishImageBrowser();
+                    importScreensaverImages(selected);
+                    return;
+                }
+                case IMAGE_RETRY:
+                    loadImageFolder();
+                    return;
+                default:
+                    return;
+            }
+        }
+
+        private int imagePrefixRows() {
+            return imageTheme ? (imageDirectory.isEmpty() ? 1 : 2) : (imageDirectory.isEmpty() ? 2 : 3);
+        }
+
+        private String imageHint() {
+            if (!imageAccessGranted) {
+                return imagePermissionDenied
+                        ? Ui.tr("Allow photo access in Android settings, or use the photo picker.")
+                        : Ui.tr("Read-only access lets Free My TV browse your photo folders.");
+            }
+            if (imageLoading) return Ui.tr("Loading images…");
+            if (!imageError.isEmpty()) return imageError;
+            return Ui.tr("OK opens folders or selects images. Back goes up.");
+        }
+
+        private void loadImageFolder() {
+            final String folder = imageDirectory;
+            final int request = ++imageRequest;
+            imageLoading = true;
+            imageError = "";
+            availableImages.clear();
+            rebuildImageRows();
+            invalidate();
+            spoken.focusMoved();
+            Context app = getContext().getApplicationContext();
+            imageWorker.execute(() -> {
+                List<ImageBrowserRow> found = null;
+                String error = "";
+                try {
+                    found = queryImageFolder(app, folder);
+                    if (found == null) error = Ui.tr("Couldn't read photos from storage.");
+                } catch (SecurityException | IllegalArgumentException e) {
+                    error = Ui.tr("Couldn't read photos from storage.");
+                    AppLog.w("image browser: couldn't query media store: " + e.getMessage());
+                }
+                List<ImageBrowserRow> result = found;
+                String message = error;
+                handler.post(() -> {
+                    if (screen != IMAGE_BROWSER || request != imageRequest || !folder.equals(imageDirectory)) return;
+                    imageLoading = false;
+                    imageError = message;
+                    if (result != null) {
+                        availableImages.clear();
+                        availableImages.addAll(result);
+                    }
+                    rebuildImageRows();
+                    focus = Math.min(focus, Math.max(0, rowCount() - 1));
+                    invalidate();
+                    spoken.focusMoved();
+                });
+            });
+        }
+
+        private static List<ImageBrowserRow> queryImageFolder(Context context, String folder) {
+            boolean modern = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q;
+            String[] columns = modern
+                    ? new String[] {MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME,
+                            MediaStore.Images.Media.RELATIVE_PATH}
+                    : new String[] {MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME,
+                            MediaStore.Images.Media.DATA};
+            Cursor cursor = context.getContentResolver().query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    columns, null, null, null);
+            if (cursor == null) return null;
+            TreeMap<String, String> folders = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+            List<ImageBrowserRow> photos = new ArrayList<>();
+            String prefix = folder.isEmpty() ? "" : folder + "/";
+            try (Cursor rows = cursor) {
+                int idColumn = rows.getColumnIndexOrThrow(MediaStore.Images.Media._ID);
+                int nameColumn = rows.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME);
+                int pathColumn = rows.getColumnIndexOrThrow(modern
+                        ? MediaStore.Images.Media.RELATIVE_PATH : MediaStore.Images.Media.DATA);
+                while (rows.moveToNext()) {
+                    long id = rows.getLong(idColumn);
+                    String name = rows.getString(nameColumn);
+                    String directory = modern ? cleanDirectory(rows.getString(pathColumn))
+                            : externalDirectory(rows.getString(pathColumn));
+                    if (name == null || name.trim().isEmpty()) name = Ui.trf("Image {n}", "n", id);
+                    if (directory.equals(folder)) {
+                        Uri uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
+                        photos.add(new ImageBrowserRow(IMAGE_FILE, name, "", "", uri));
+                    } else if (directory.startsWith(prefix)) {
+                        String rest = directory.substring(prefix.length());
+                        if (rest.isEmpty()) continue;
+                        int slash = rest.indexOf('/');
+                        String child = slash < 0 ? rest : rest.substring(0, slash);
+                        if (!child.isEmpty()) folders.put(child, prefix + child);
+                    }
+                }
+            }
+            Collections.sort(photos, (a, b) ->
+                    a.label.toLowerCase(Locale.ROOT).compareTo(b.label.toLowerCase(Locale.ROOT)));
+            List<ImageBrowserRow> out = new ArrayList<>();
+            for (java.util.Map.Entry<String, String> child : folders.entrySet()) {
+                out.add(new ImageBrowserRow(IMAGE_FOLDER, child.getKey(), Ui.tr("Folder"), child.getValue(), null));
+            }
+            out.addAll(photos);
+            return out;
+        }
+
+        private static String cleanDirectory(String path) {
+            if (path == null) return "";
+            String out = path.replace('\\', '/');
+            while (out.startsWith("/")) out = out.substring(1);
+            while (out.endsWith("/")) out = out.substring(0, out.length() - 1);
+            return out;
+        }
+
+        private static String externalDirectory(String path) {
+            if (path == null) return "";
+            File parent = new File(path).getParentFile();
+            if (parent == null) return "";
+            String root = Environment.getExternalStorageDirectory().getAbsolutePath();
+            String directory = parent.getAbsolutePath();
+            if (directory.equals(root)) return "";
+            if (!directory.startsWith(root + File.separator)) return "";
+            return directory.substring(root.length() + 1).replace(File.separatorChar, '/');
+        }
+
+        private static String parentDirectory(String path) {
+            int slash = path.lastIndexOf('/');
+            return slash < 0 ? "" : path.substring(0, slash);
+        }
+
+        private void rebuildImageRows() {
+            imageRows.clear();
+            if (!imageAccessGranted) {
+                imageRows.add(new ImageBrowserRow(imagePermissionDenied ? IMAGE_SETTINGS : IMAGE_GRANT,
+                        imagePermissionDenied ? Ui.tr("Open app settings") : Ui.tr("Grant access"), "", "", null));
+                imageRows.add(new ImageBrowserRow(IMAGE_SYSTEM, Ui.tr("Use Android photo picker"), "", "", null));
+                imageRows.add(new ImageBrowserRow(IMAGE_CANCEL, Ui.tr("Cancel"), "", "", null));
+            } else if (imageLoading) {
+                imageRows.add(new ImageBrowserRow(IMAGE_CANCEL, Ui.tr("Cancel"), "", "", null));
+                imageRows.add(new ImageBrowserRow(IMAGE_LOADING, Ui.tr("Loading images…"), "", "", null));
+            } else if (!imageError.isEmpty()) {
+                imageRows.add(new ImageBrowserRow(IMAGE_CANCEL, Ui.tr("Cancel"), "", "", null));
+                imageRows.add(new ImageBrowserRow(IMAGE_RETRY, Ui.tr("Try again"), "", "", null));
+                imageRows.add(new ImageBrowserRow(IMAGE_EMPTY, imageError, "", "", null));
+            } else {
+                imageRows.add(new ImageBrowserRow(IMAGE_CANCEL, Ui.tr("Cancel"), "", "", null));
+                if (!imageTheme) {
+                    imageRows.add(new ImageBrowserRow(IMAGE_USE, Ui.tr("Add images"),
+                            Ui.trf("{n} selected", "n", selectedImages.size()), "", null));
+                }
+                if (!imageDirectory.isEmpty()) {
+                    imageRows.add(new ImageBrowserRow(IMAGE_PARENT, Ui.tr("Back to parent folder"), "", parentDirectory(imageDirectory), null));
+                }
+                for (ImageBrowserRow item : availableImages) {
+                    if (item.kind == IMAGE_FOLDER) {
+                        imageRows.add(item);
+                    } else {
+                        imageRows.add(new ImageBrowserRow(IMAGE_FILE, item.label,
+                                selectedImages.contains(item.uri) ? Ui.tr("Selected") : "", "", item.uri));
+                    }
+                }
+                if (availableImages.isEmpty()) {
+                    imageRows.add(new ImageBrowserRow(IMAGE_EMPTY, Ui.tr("No images found in this folder."), "", "", null));
+                }
+            }
+            imageLabels = new String[imageRows.size()];
+            imageValues = new String[imageRows.size()];
+            for (int i = 0; i < imageRows.size(); i++) {
+                imageLabels[i] = imageRows.get(i).label;
+                imageValues[i] = imageRows.get(i).value;
+            }
+        }
+
         private void refreshBing(boolean force) {
             BingWallpapers.refresh(getContext(), force, () -> {
                 invalidate();
@@ -1436,6 +2021,7 @@ public class SettingsActivity extends Activity {
             if (screen == NAMES) return nameLabels();
             if (screen == SCREENSAVER) return saverLabels();
             if (screen == THEME) return themeLabels();
+            if (screen == IMAGE_BROWSER) return imageLabels;
             return settingLabels();
         }
 
@@ -1445,6 +2031,7 @@ public class SettingsActivity extends Activity {
             if (screen == NAMES) return nameValues();
             if (screen == SCREENSAVER) return saverValues();
             if (screen == THEME) return themeValues();
+            if (screen == IMAGE_BROWSER) return imageValues;
             return settingValues();
         }
 
@@ -1635,7 +2222,8 @@ public class SettingsActivity extends Activity {
         }
 
         private boolean scrolling() {
-            return screen == PICKER || screen == SHELF_EDIT || screen == HOME_SETTINGS || screen == NAMES || screen == SCREENSAVER;
+            return screen == PICKER || screen == SHELF_EDIT || screen == HOME_SETTINGS || screen == NAMES
+                    || screen == SCREENSAVER || screen == IMAGE_BROWSER;
         }
 
         private int listSize() {
@@ -1643,6 +2231,7 @@ public class SettingsActivity extends Activity {
             if (screen == HOME_SETTINGS) return settingLabels().length;
             if (screen == NAMES) return nameLabels().length;
             if (screen == SCREENSAVER) return saverLabels().length;
+            if (screen == IMAGE_BROWSER) return imageRows.size();
             return pickLabels.size();
         }
 
@@ -1812,9 +2401,14 @@ public class SettingsActivity extends Activity {
             Paint heading = Ui.text(Ui.displaySemibold, 34 * k, 0xFFFFFFFF);
             String titleText = keys ? Ui.tr("Remote Buttons") : screen == POWER ? Ui.tr("Sleep Timer")
                     : screen == NAMES ? Ui.tr("Names") : screen == SCREENSAVER ? Ui.tr("Screensaver")
-                    : screen == THEME ? Ui.tr("Theme") : Ui.tr("Home Settings");
+                    : screen == THEME ? Ui.tr("Theme") : screen == IMAGE_BROWSER ? Ui.tr("My Photos") : Ui.tr("Home Settings");
             c.drawText(titleText,
                     LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
+            if (screen == IMAGE_BROWSER) {
+                rowSub.setColor(0x99FFFFFF);
+                c.drawText(imageDirectory.isEmpty() ? Ui.tr("Internal storage") : imageDirectory,
+                        LIST_X * k + 30 * k, (LIST_TOP - 2) * k, rowSub);
+            }
             float pitch = LIST_ROW_H + LIST_ROW_GAP;
             int rows = keys ? labels.length : rowCount(), from = keys ? 0 : pickScroll;
             for (int i = 0; i < rows; i++) {
@@ -1828,12 +2422,17 @@ public class SettingsActivity extends Activity {
                 if (locked) rowLabel.setColor(blend(0x73FFFFFF, 0x731C1C1E, f));
                 float base = rowRect.centerY() + Ui.halfCap(rowLabel);
                 float labelX = rowRect.left + 30 * k, valueX = rowRect.right - 30 * k;
-                c.drawText(labels[from + i], labelX, base, rowLabel);
+                String label = labels[from + i];
                 String value = values[from + i];
-                float valueWidth = Math.max(0, valueX - labelX - rowLabel.measureText(labels[from + i]) - 32 * k);
+                float valueWidth = Math.max(0, valueX - labelX - rowLabel.measureText(label) - 32 * k);
                 if (rowValue.measureText(value) > valueWidth) {
                     value = TextUtils.ellipsize(value, valueFit, valueWidth, TextUtils.TruncateAt.END).toString();
                 }
+                if (screen == IMAGE_BROWSER) {
+                    float labelWidth = Math.max(0, valueX - labelX - rowValue.measureText(value) - 32 * k);
+                    label = TextUtils.ellipsize(label, labelFit, labelWidth, TextUtils.TruncateAt.END).toString();
+                }
+                c.drawText(label, labelX, base, rowLabel);
                 c.drawText(value, valueX, base, rowValue);
             }
             Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
@@ -1841,7 +2440,8 @@ public class SettingsActivity extends Activity {
             // A list longer than the screen says where we are in it, as the app picker does. Photos say where they come
             // from; on the Sleep Timer screen, the timer and Position open a list on OK.
             String where = rows < labels.length ? (from + focus + 1) + " / " + labels.length + "  ·  " : "";
-            String hintText = screen == HOME_SETTINGS && from + focus == PHOTOS_ROW ? (Photos.files(getContext()).isEmpty()
+            String hintText = screen == IMAGE_BROWSER ? imageHint()
+                    : screen == HOME_SETTINGS && from + focus == PHOTOS_ROW ? (Photos.files(getContext()).isEmpty()
                     ? Ui.tr("Send them from a computer: see “Your own photos” in the README.")
                     : Ui.tr("OK removes them; the arrows turn them on or off."))
                     : screen == POWER && powerRow() != P_SHOW && unavailable(focus) == null ? Ui.tr("OK opens the list. ← → change the value.")
@@ -1864,7 +2464,10 @@ public class SettingsActivity extends Activity {
         private void activate() {
             Context c = getContext();
             if (tellWhy()) return;
-            if (screen == HOME_CHOICE) {
+            if (screen == IMAGE_BROWSER) {
+                activateImageBrowser();
+                return;
+            } else if (screen == HOME_CHOICE) {
                 boolean wantFree = focus == 0;
                 boolean already = wantFree ? freeActive() : HomeMode.ORIGINAL.equals(state.optString("mode", HomeMode.ORIGINAL));
                 if (!already && !busy()) {

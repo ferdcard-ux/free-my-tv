@@ -165,7 +165,7 @@ La primera ruta de importación de imágenes no abría un selector utilizable en
 
 ### Solución Aplicada
 
-1. Se usó `ACTION_GET_CONTENT`, manejado por Photo Picker de Google TV en el emulador.
+1. Se prefiere `ACTION_OPEN_DOCUMENT` cuando existe un selector real de archivos; si solo se anuncia el stub de Android TV, se usa `ACTION_GET_CONTENT`, manejado por Photo Picker en el emulador.
 2. Se corrigieron los errores de compilación y se volvió a generar `FreeMyTV.apk`.
 3. Se retiró el log temporal `theme image probe` de `WallpaperImages.java`.
 4. Se añadió truncamiento de valores largos en filas para mantener separados rótulos y valores.
@@ -312,8 +312,59 @@ Se solicitó publicar los cambios y el APK en `ferdcard-ux/free-my-tv`, no en el
 
 ---
 
+## 9. Corrección del enfoque al elegir imágenes
+
+### Causa
+
+- La navegación de imágenes se abría como una actividad del sistema, no se dibujaba dentro de Free My TV. El Photo Picker no mostraba un indicador de foco suficientemente claro en las TVs de prueba.
+- En ambas TVs, `ACTION_OPEN_DOCUMENT` resolvía a `com.android.tv.frameworkpackagestubs/.Stubs$DocumentsStub`, sin una interfaz de archivos funcional. La app tampoco puede modificar cómo otra aplicación del sistema dibuja su foco.
+
+### Cambio
+
+- Se añadió en `SettingsActivity` un navegador interno de imágenes respaldado por `MediaStore`. Las carpetas y las fotos se dibujan en el Canvas de Ajustes, por lo que comparten el mismo resaltado visible de foco y navegación DPAD que el resto de la app.
+- El navegador permite recorrer carpetas, elegir una imagen para el tema y seleccionar varias para el protector. Incluye carga, estado vacío, reintento, cancelación, permiso de lectura, acceso a ajustes y Photo Picker del sistema como alternativa.
+- El permiso se solicita al abrir el navegador: `READ_MEDIA_IMAGES` en Android 13+, `READ_MEDIA_VISUAL_USER_SELECTED` para acceso limitado en Android 14+, y `READ_EXTERNAL_STORAGE` hasta Android 12. La app solo lee las imágenes seleccionadas; `WallpaperImages` sigue copiándolas al almacenamiento privado de Free My TV.
+- Se revisó el foco de las páginas principales, Ajustes de inicio, Tema, Nombres y Protector de pantalla: las filas seleccionadas usan el resaltado blanco compartido.
+
+### Verificación y límites
+
+- `build.sh` y `python tools/translate.py --check` finalizaron correctamente.
+- Se instaló la compilación en la Caixun Sgamer y el emulador Android TV. En ambos se comprobó el foco visible en Ajustes y en el selector; en el emulador también se recorrieron una carpeta anidada y una imagen sintética.
+- En el emulador, el acceso de solo lectura permitió enumerar `Pictures/FreeMyTVTest/selector-test.png`. Al cancelar, el foco regresó a «Imagen de fondo». También se verificó la recuperación al denegar el permiso y reabrir el selector.
+- En la Caixun, que estaba dormida, se comprobó la pantalla de permiso y el resaltado de «Permitir acceso»; el permiso no se concedió en ese dispositivo.
+- La imagen sintética y su carpeta se retiraron. No se importaron imágenes ni se accedió a fotos personales. Logcat no mostró excepciones fatales ni ANR durante la prueba.
+- Los demás dispositivos que aparecen en ADB no se modificaron.
+
+### Estado final del entorno
+
+- La Caixun quedó despierta tras la prueba. El permiso de fotos permanece sin conceder y con sus indicadores de solicitud restablecidos; el emulador también quedó sin permiso concedido.
+- No quedó la imagen sintética en Pictures. La imagen de tema preexistente del emulador no se modificó.
+
+---
+
+## 10. Vista previa de fotos en el navegador interno
+
+### Cambio
+
+- Al enfocar una foto en «Mis fotos», el panel izquierdo muestra una miniatura recortada y el nombre del archivo. Mientras se carga, conserva una indicación de carga y, si no se puede leer, muestra el error correspondiente.
+- Las miniaturas se cargan fuera del hilo de interfaz con `ContentResolver.loadThumbnail` en Android 10+ y una decodificación reducida como alternativa. Al cambiar de foto o salir del navegador, se cancela la tarea anterior y se libera el bitmap para evitar resultados obsoletos y retener memoria.
+
+### Verificación y límites
+
+- `build.sh` terminó con `Built FreeMyTV.apk`; `python tools/translate.py --check` validó los 301 textos.
+- Se instaló la compilación en el emulador Android TV (Android 14). Una imagen sintética no personal mostró su miniatura y nombre al enfocarla; al cancelar, el foco regresó a «Imagen de fondo». Logcat no registró errores de la app durante la prueba.
+- No se seleccionó ni importó ninguna foto como fondo. No se probó la vista previa en la Caixun física.
+
+### Estado final del entorno
+
+- Se eliminó del emulador la imagen y carpeta de prueba, junto con la captura temporal; se revocó `READ_MEDIA_IMAGES` y se confirmó que ambos permisos de fotos están denegados.
+- No se modificaron el fondo, las preferencias ni los datos de fotos personales del emulador; los otros dispositivos ADB no se modificaron.
+
+---
+
 ## Historial de Versiones
 
 | Fecha | Versión | Cambios |
 |---|---|---|
+| 2026-10-28 | 1.3.1 / Android 1.3.1 (versionCode 5) | Vista previa de fotos enfocadas en el navegador interno; publicación de APK genérico en el release `v1.3.1` del fork. |
 | 2026-10-26 | 1.3.0 / Android 1.3 (versionCode 4) | Nombres personalizables, fuentes TMDB/Bing/almacenamiento interno, fondos de tema con opacidad; pruebas en emulador y Caixun Sgamer y publicación del APK en el fork `ferdcard-ux/free-my-tv`. |
